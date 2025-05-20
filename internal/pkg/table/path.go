@@ -526,7 +526,7 @@ func (path *Path) GetPathAttrs() []bgp.PathAttributeInterface {
 				for _, m := range modified {
 					list = append(list, m)
 				}
-				sort.Sort(list)
+		//		sort.Sort(list)
 			}
 			return list
 		} else {
