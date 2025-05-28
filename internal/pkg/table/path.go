@@ -18,6 +18,7 @@ package table
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -980,10 +981,16 @@ func (path *Path) SetLargeCommunities(cs []*bgp.LargeCommunity, doReplace bool) 
 	}
 }
 
+var ErrNoMedPathAttr error
+
+func init() {
+	ErrNoMedPathAttr = errors.New("no med path attr")
+}
+
 func (path *Path) GetMed() (uint32, error) {
 	attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_MULTI_EXIT_DISC)
 	if attr == nil {
-		return 0, fmt.Errorf("no med path attr")
+		return 0, ErrNoMedPathAttr
 	}
 	return attr.(*bgp.PathAttributeMultiExitDisc).Value, nil
 }
