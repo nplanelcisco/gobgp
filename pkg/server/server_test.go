@@ -766,7 +766,7 @@ func TestMonitor(test *testing.T) {
 	<-ch
 
 	// Test WatchBestPath.
-	w := s.watch(watchBestPath(false))
+	w := s.watch(WatchBestPath(false))
 
 	// Advertises a route.
 	attrs := []bgp.PathAttributeInterface{
@@ -783,7 +783,7 @@ func TestMonitor(test *testing.T) {
 	}
 
 	ev := <-w.Event()
-	b := ev.(*watchEventBestPath)
+	b := ev.(*WatchEventBestPath)
 	assert.Equal(1, len(b.PathList))
 	assert.Equal("10.0.0.0/24", b.PathList[0].GetNlri().String())
 	assert.False(b.PathList[0].IsWithdraw)
@@ -796,7 +796,7 @@ func TestMonitor(test *testing.T) {
 		test.Error(err)
 	}
 	ev = <-w.Event()
-	b = ev.(*watchEventBestPath)
+	b = ev.(*WatchEventBestPath)
 	assert.Equal(1, len(b.PathList))
 	assert.Equal("10.0.0.0/24", b.PathList[0].GetNlri().String())
 	assert.True(b.PathList[0].IsWithdraw)
@@ -823,16 +823,16 @@ func TestMonitor(test *testing.T) {
 	}
 
 	// Test WatchUpdate with "current" flag.
-	w = s.watch(watchUpdate(true, "", ""))
+	w = s.watch(WatchUpdate(true, "", ""))
 
 	// Test the initial route.
 	ev = <-w.Event()
-	u := ev.(*watchEventUpdate)
+	u := ev.(*WatchEventUpdate)
 	assert.Equal(1, len(u.PathList))
 	assert.Equal("10.1.0.0/24", u.PathList[0].GetNlri().String())
 	assert.False(u.PathList[0].IsWithdraw)
 	ev = <-w.Event()
-	u = ev.(*watchEventUpdate)
+	u = ev.(*WatchEventUpdate)
 	assert.Equal(len(u.PathList), 0) // End of RIB
 
 	// Advertises an additional route.
@@ -840,7 +840,7 @@ func TestMonitor(test *testing.T) {
 		test.Error(err)
 	}
 	ev = <-w.Event()
-	u = ev.(*watchEventUpdate)
+	u = ev.(*WatchEventUpdate)
 	assert.Equal(1, len(u.PathList))
 	assert.Equal("10.2.0.0/24", u.PathList[0].GetNlri().String())
 	assert.False(u.PathList[0].IsWithdraw)
@@ -851,14 +851,14 @@ func TestMonitor(test *testing.T) {
 		test.Error(err)
 	}
 	ev = <-w.Event()
-	u = ev.(*watchEventUpdate)
+	u = ev.(*WatchEventUpdate)
 	assert.Equal(1, len(u.PathList))
 	assert.Equal("10.2.0.0/24", u.PathList[0].GetNlri().String())
 	assert.True(u.PathList[0].IsWithdraw)
 
 	// Test bestpath events with vrf and rt import
 	w.Stop()
-	w = s.watch(watchBestPath(false))
+	w = s.watch(WatchBestPath(false))
 	attrs = []bgp.PathAttributeInterface{
 		bgp.NewPathAttributeOrigin(0),
 		bgp.NewPathAttributeNextHop("10.0.0.1"),
@@ -868,7 +868,7 @@ func TestMonitor(test *testing.T) {
 		test.Error(err)
 	}
 	ev = <-w.Event()
-	b = ev.(*watchEventBestPath)
+	b = ev.(*WatchEventBestPath)
 	assert.Equal(1, len(b.PathList))
 	assert.Equal("111:111:10.0.0.0/24", b.PathList[0].GetNlri().String())
 	assert.False(b.PathList[0].IsWithdraw)
@@ -881,7 +881,7 @@ func TestMonitor(test *testing.T) {
 		test.Error(err)
 	}
 	ev = <-w.Event()
-	b = ev.(*watchEventBestPath)
+	b = ev.(*WatchEventBestPath)
 	assert.Equal(1, len(b.PathList))
 	assert.Equal("111:111:10.0.0.0/24", b.PathList[0].GetNlri().String())
 	assert.True(b.PathList[0].IsWithdraw)
@@ -1629,7 +1629,7 @@ func TestDoNotReactToDuplicateRTCMemberships(t *testing.T) {
 	if err := peerServers(t, ctx, []*BgpServer{s1, s2}, []oc.AfiSafiType{oc.AFI_SAFI_TYPE_L3VPN_IPV4_UNICAST, oc.AFI_SAFI_TYPE_RTC}); err != nil {
 		t.Fatal(err)
 	}
-	watcher := s1.watch(watchUpdate(true, "", ""))
+	watcher := s1.watch(WatchUpdate(true, "", ""))
 
 	// Add route to vrf1 on s2
 	attrs := []bgp.PathAttributeInterface{
@@ -1653,7 +1653,7 @@ func TestDoNotReactToDuplicateRTCMemberships(t *testing.T) {
 		select {
 		case ev := <-watcher.Event():
 			switch msg := ev.(type) {
-			case *watchEventUpdate:
+			case *WatchEventUpdate:
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
@@ -1697,7 +1697,7 @@ func TestDoNotReactToDuplicateRTCMemberships(t *testing.T) {
 		select {
 		case ev := <-watcher.Event():
 			switch msg := ev.(type) {
-			case *watchEventUpdate:
+			case *WatchEventUpdate:
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
