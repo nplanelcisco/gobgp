@@ -590,8 +590,8 @@ func (u *Update) GetChanges(id string, as uint32, peerDown bool) (*Path, *Path, 
 }
 
 func compareByLLGRStaleCommunity(path1, path2 *Path) *Path {
-	p1 := path1.IsLLGRStale()
-	p2 := path2.IsLLGRStale()
+	p1 := path1.IsLLGRStaleFast()
+	p2 := path2.IsLLGRStaleFast()
 	if p1 == p2 {
 		return nil
 	} else if p1 {

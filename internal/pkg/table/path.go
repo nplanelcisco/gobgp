@@ -128,6 +128,10 @@ type Validation struct {
 	UnmatchedLength []*ROA
 }
 
+type PathCommunitiesCache struct {
+	IsLLGRStale bool
+}
+
 type Path struct {
 	info      *originInfo
 	parent    *Path
@@ -141,6 +145,8 @@ type Path struct {
 	// For BGP Nexthop Tracking, this field shows if nexthop is invalidated by IGP.
 	IsNexthopInvalid bool
 	IsWithdraw       bool
+	// For compute known best path
+	cache PathCommunitiesCache
 }
 
 type FilteredType uint8
@@ -432,6 +438,10 @@ func (path *Path) IsLLGRStale() bool {
 		}
 	}
 	return false
+}
+
+func (path *Path) IsLLGRStaleFast() bool {
+	return path.cache.IsLLGRStale
 }
 
 func (path *Path) GetSourceAs() uint32 {
@@ -841,6 +851,14 @@ func (path *Path) SetCommunities(communities []uint32, doReplace bool) {
 		return
 	}
 
+	isLLGRStale := false
+	for _, c := range communities {
+		if c == uint32(bgp.COMMUNITY_LLGR_STALE) {
+			isLLGRStale = true
+			break
+		}
+	}
+
 	newList := make([]uint32, 0)
 	attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_COMMUNITIES)
 	if attr != nil {
@@ -856,6 +874,7 @@ func (path *Path) SetCommunities(communities []uint32, doReplace bool) {
 	}
 	path.setPathAttr(bgp.NewPathAttributeCommunities(newList))
 
+	path.cache.IsLLGRStale = isLLGRStale
 }
 
 // RemoveCommunities removes specific communities.
