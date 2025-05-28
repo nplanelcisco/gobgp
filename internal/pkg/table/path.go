@@ -445,6 +445,7 @@ func (path *Path) HasNoLLGR() bool {
 func (path *Path) IsLLGRStale() bool {
 	for _, c := range path.GetCommunities() {
 		if c == uint32(bgp.COMMUNITY_LLGR_STALE) {
+			path.cache.IsLLGRStale = true
 			return true
 		}
 	}
@@ -566,6 +567,10 @@ func (path *Path) setPathAttr(a bgp.PathAttributeInterface) {
 
 func (path *Path) delPathAttr(typ bgp.BGPAttrType) {
 	path.dels[typ] = struct{}{}
+
+	if typ == bgp.BGP_ATTR_TYPE_COMMUNITIES {
+		path.cache.IsLLGRStale = false
+	}
 }
 
 // return Path's string representation
