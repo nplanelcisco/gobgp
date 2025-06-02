@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/segmentio/fasthash/fnv1a"
 )
 
 type MarshallingOption struct {
@@ -10444,6 +10446,7 @@ type PathAttributeInterface interface {
 	DecodeFromBytes([]byte, ...*MarshallingOption) error
 	Serialize(...*MarshallingOption) ([]byte, error)
 	Len(...*MarshallingOption) int
+	Hash() uint64
 	GetFlags() BGPAttrFlag
 	GetType() BGPAttrType
 	String() string
@@ -10455,6 +10458,7 @@ type PathAttribute struct {
 	Flags  BGPAttrFlag
 	Type   BGPAttrType
 	Length uint16 // length of Value
+	hash   uint64 // hash for the whole object, including Flags, Type, Length and Value
 }
 
 func (p *PathAttribute) Len(options ...*MarshallingOption) int {
@@ -10462,6 +10466,10 @@ func (p *PathAttribute) Len(options ...*MarshallingOption) int {
 		return 4 + int(p.Length)
 	}
 	return 3 + int(p.Length)
+}
+
+func (p *PathAttribute) Hash() uint64 {
+	return p.hash
 }
 
 func (p *PathAttribute) GetFlags() BGPAttrFlag {
@@ -10501,7 +10509,7 @@ func (p *PathAttribute) DecodeFromBytes(data []byte, options ...*MarshallingOpti
 	if eMsg := validatePathAttributeFlags(p.Type, p.Flags); eMsg != "" {
 		return nil, NewMessageError(eCode, BGP_ERROR_SUB_ATTRIBUTE_FLAGS_ERROR, data, eMsg)
 	}
-
+	p.hash = fnv1a.AddBytes64(fnv1a.Init64, data[:p.Length])
 	return data[:p.Length], nil
 }
 
@@ -10513,15 +10521,19 @@ func (p *PathAttribute) Serialize(value []byte, options ...*MarshallingOption) (
 		flags |= BGP_ATTR_FLAG_EXTENDED_LENGTH
 	}
 	var buf []byte
+	var payload []byte
 	if flags&BGP_ATTR_FLAG_EXTENDED_LENGTH != 0 {
 		buf = append(make([]byte, 4), value...)
 		binary.BigEndian.PutUint16(buf[2:4], length)
+		payload = buf[4:]
 	} else {
 		buf = append(make([]byte, 3), value...)
 		buf[2] = byte(length)
+		payload = buf[3:]
 	}
 	buf[0] = uint8(flags)
 	buf[1] = uint8(p.Type)
+	p.hash = fnv1a.AddBytes64(fnv1a.Init64, payload)
 	return buf, nil
 }
 
