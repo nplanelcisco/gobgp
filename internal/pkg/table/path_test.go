@@ -459,7 +459,7 @@ func TestCloneTablePathTree(t *testing.T) {
 		assert.Equal(t, expected, actual)
 		assert.Equal(t, expected.GetSource(), actual.GetSource())
 		assert.Equal(t, expected.GetNlri(), actual.GetNlri())
-		assert.Equal(t, expected.GetPathAttrs(), actual.GetPathAttrs())
+		assert.Equal(t, expected.GetHash(), actual.GetHash())
 		assert.Equal(t, expected.GetTimestamp(), actual.GetTimestamp())
 	}
 	for i, path := range cpaths {
