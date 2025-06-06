@@ -44,6 +44,9 @@ import (
 	"github.com/osrg/gobgp/v3/pkg/zebra"
 )
 
+type Path = table.Path
+type PeerInfo = table.PeerInfo
+
 type FSMOperation uint
 
 const (
