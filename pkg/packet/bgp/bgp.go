@@ -11689,7 +11689,7 @@ func (p *PathAttributeMpReachNLRI) DecodeFromBytes(data []byte, options ...*Mars
 		addpathLen = 4
 	}
 
-	vplsNLRIFamily := AfiSafiToFamily(AFI_L2VPN, SAFI_VPLS)
+	vplsNLRIFamily := AfiSafiToRouteFamily(AFI_L2VPN, SAFI_VPLS)
 	requireHashUpdate := false
 	for len(value) > 0 {
 		prefix, err := NewPrefixFromRouteFamily(afi, safi)
@@ -11700,7 +11700,7 @@ func (p *PathAttributeMpReachNLRI) DecodeFromBytes(data []byte, options ...*Mars
 		if err != nil {
 			return err
 		}
-		if vplsNLRIFamily == AfiSafiToFamily(afi, safi) {
+		if vplsNLRIFamily == AfiSafiToRouteFamily(afi, safi) {
 			// workaround for VPLS NLRI, we need to update the hash, as VPLSNLRI.LabelBlockBase field contain (MPLS label on 20bits) so the last 4 bits are not used and can contain garbage that will change the hash
 			requireHashUpdate = true
 		}
