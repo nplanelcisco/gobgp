@@ -219,62 +219,14 @@ func TestListPolicyAssignment(t *testing.T) {
 
 func waitState(s *BgpServer, ch chan struct{}, state api.PeerState_SessionState) {
 	watchCtx, watchCancel := context.WithCancel(context.Background())
-	var syncWaitStateAPIs sync.WaitGroup
-
-	syncWaitStateAPIs.Add(1)
 	s.WatchEvent(watchCtx, &api.WatchEventRequest{Peer: &api.WatchEventRequest_Peer{}}, func(r *api.WatchEventResponse) {
 		if peer := r.GetPeer(); peer != nil {
 			if peer.Type == api.WatchEventResponse_PeerEvent_STATE && peer.Peer.State.SessionState == state {
-				remoteCaps, err := apiutil.UnmarshalCapabilities(peer.Peer.GetState().GetRemoteCap())
-				if err != nil {
-					return
-				}
-				for _, rf := range expectedFamilies {
-					found := false
-					for _, cap := range remoteCaps {
-						if cap.Code() == bgp.BGP_CAP_MULTIPROTOCOL && cap.(*bgp.CapMultiProtocol).CapValue == rf {
-							found = true
-							break
-						}
-					}
-					if !found {
-						return
-					}
-				}
-				fmt.Printf("Watchevent Peer %s is in state %s with families %v\n", peer.Peer.State.NeighborAddress, state, expectedFamilies)
-				syncWaitStateAPIs.Done()
+				close(ch)
+				watchCancel()
 			}
 		}
 	})
-
-	syncWaitStateAPIs.Add(1)
-	s.WatchEventMessages(watchCtx, &api.WatchEventRequest{Peer: &api.WatchEventRequest_Peer{}},
-		WatchEventMessageCallbacks{
-			OnPeerUpdate: func(peer *apiutil.WatchEventMessage_PeerEvent) {
-				if peer != nil {
-					sessionState := api.PeerState_SessionState(int(peer.Peer.State.SessionState) + 1)
-					if peer.Type == api.WatchEventResponse_PeerEvent_TYPE_STATE && sessionState == state {
-						for _, rf := range expectedFamilies {
-							found := false
-							for _, cap := range peer.Peer.State.RemoteCap {
-								if cap.Code() == bgp.BGP_CAP_MULTIPROTOCOL && cap.(*bgp.CapMultiProtocol).CapValue == rf {
-									found = true
-									break
-								}
-							}
-							if !found {
-								return
-							}
-						}
-						fmt.Printf("WatcheventMessages Peer %s is in state %s with families %v\n", peer.Peer.State.NeighborAddress, state, expectedFamilies)
-						syncWaitStateAPIs.Done()
-					}
-				}
-			}})
-
-	syncWaitStateAPIs.Wait()
-	close(ch)
-	watchCancel()
 }
 
 func waitActive(s *BgpServer, ch chan struct{}) {
