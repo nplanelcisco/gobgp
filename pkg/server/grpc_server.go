@@ -417,9 +417,7 @@ func api2Path(resource api.TableType, path *api.Path, isWithdraw bool) (*table.P
 		}
 	}
 
-	if nlri == nil {
-		return nil, fmt.Errorf("nlri not found")
-	} else if !path.IsWithdraw && nexthop == "" {
+	if !path.IsWithdraw && nexthop == "" {
 		return nil, fmt.Errorf("nexthop not found")
 	}
 	rf := bgp.AfiSafiToFamily(uint16(path.Family.Afi), uint8(path.Family.Safi))
