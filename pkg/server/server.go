@@ -2831,6 +2831,98 @@ func (s *BgpServer) getAdjRib(addr string, family bgp.Family, in bool, enableFil
 	return
 }
 
+/*
+request input fields:
+EnableNlriBinary
+EnableAttributeBinary
+EnableOnlyBinary
+BatchSize
+
+will have no effect
+
+limitations:
+- no validation fields
+- no filtered/sendmax fields
+*/
+func (s *BgpServer) ApiListPath(ctx context.Context, r *api.ListPathRequest, fn func(Prefix string, paths []*apiutil.Path)) error {
+	if r == nil {
+		return fmt.Errorf("nil request")
+	}
+
+	f := func() []*table.LookupPrefix {
+		l := make([]*table.LookupPrefix, 0, len(r.Prefixes))
+		for _, p := range r.Prefixes {
+			l = append(l, &table.LookupPrefix{
+				Prefix:       p.Prefix,
+				RD:           p.Rd,
+				LookupOption: table.LookupOption(p.Type),
+			})
+		}
+		return l
+	}
+
+	in := false
+	family := bgp.Family(0)
+	if r.Family != nil {
+		family = bgp.AfiSafiToFamily(uint16(r.Family.Afi), uint8(r.Family.Safi))
+	}
+
+	var tbl *table.Table
+	var err error
+	switch r.TableType {
+	case api.TableType_TABLE_TYPE_UNSPECIFIED:
+		return status.Error(codes.InvalidArgument, "unspecified table type")
+	case api.TableType_TABLE_TYPE_LOCAL, api.TableType_TABLE_TYPE_GLOBAL:
+		tbl, _, err = s.getRib(r.Name, family, f())
+	case api.TableType_TABLE_TYPE_ADJ_IN:
+		in = true
+		fallthrough
+	case api.TableType_TABLE_TYPE_ADJ_OUT:
+		tbl, _, _, err = s.getAdjRib(r.Name, family, in, r.EnableFiltered, f())
+	case api.TableType_TABLE_TYPE_VRF:
+		tbl, err = s.getVrfRib(r.Name, family, []*table.LookupPrefix{})
+	default:
+		return status.Errorf(codes.InvalidArgument, "unknown table type %d", r.TableType)
+	}
+	if err != nil {
+		return err
+	}
+
+	err = func() error {
+		for _, dst := range tbl.GetDestinations() {
+			prefix := dst.GetNlri().String()
+			knownPathList := dst.GetAllKnownPathList()
+			paths := make([]*apiutil.Path, len(knownPathList))
+
+			for i, path := range knownPathList {
+				// we don't have field for validation in apiutil.Path
+				p := toPathApiUtil(path)
+				if !table.SelectionOptions.DisableBestPathSelection {
+					if i == 0 {
+						switch r.TableType {
+						case api.TableType_TABLE_TYPE_LOCAL, api.TableType_TABLE_TYPE_GLOBAL:
+							p.Best = true
+						}
+					} else if s.bgpConfig.Global.UseMultiplePaths.Config.Enabled && path.Equal(knownPathList[i-1]) {
+						p.Best = true
+					}
+				}
+				// we don't have field for filtered/sendmax in apiutil.Path
+				paths[i] = p
+			}
+
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				fn(prefix, paths)
+			}
+		}
+		return nil
+	}()
+	return err
+}
+
 func (s *BgpServer) ListPath(ctx context.Context, r *api.ListPathRequest, fn func(*api.Destination)) error {
 	if r == nil {
 		return fmt.Errorf("nil request")
