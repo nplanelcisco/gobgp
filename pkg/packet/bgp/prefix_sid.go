@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/netip"
 )
 
@@ -446,7 +445,8 @@ func (s *SRv6InformationSubTLV) MarshalJSON() ([]byte, error) {
 
 func (s *SRv6InformationSubTLV) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("SID: %s ", net.IP(s.SID).To16().String()))
+	addr, _ := netip.AddrFromSlice(s.SID)
+	buf.WriteString(fmt.Sprintf("SID: %s ", addr.String()))
 	buf.WriteString(fmt.Sprintf("Flag: %d ", s.Flags))
 	buf.WriteString(fmt.Sprintf("Endpoint Behavior: %d ", s.EndpointBehavior))
 	for _, tlv := range s.SubSubTLVs {

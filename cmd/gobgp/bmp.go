@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 
 	"github.com/osrg/gobgp/v4/api"
@@ -70,9 +71,9 @@ func modBmpServer(cmdType string, args []string) error {
 	var address string
 	port := uint32(bmp.BMP_DEFAULT_PORT)
 	if host, p, err := net.SplitHostPort(args[0]); err != nil {
-		ip := net.ParseIP(args[0])
-		if ip == nil {
-			return nil
+		ip, err := netip.ParseAddr(args[0])
+		if err != nil || !ip.IsValid() {
+			return err
 		}
 		address = args[0]
 	} else {

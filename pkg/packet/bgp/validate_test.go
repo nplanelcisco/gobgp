@@ -2,7 +2,7 @@ package bgp
 
 import (
 	"encoding/binary"
-	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -214,7 +214,7 @@ func Test_Validate_invalid_nexthop_zero(t *testing.T) {
 	message := bgpupdate().Body.(*BGPUpdate)
 
 	// invalid nexthop
-	addr := net.ParseIP("0.0.0.1").To4()
+	addr := netip.MustParseAddr("0.0.0.1").AsSlice()
 	nexthopBytes := []byte{byte(PathAttrFlags[BGP_ATTR_TYPE_NEXT_HOP]), 3, 4}
 	nexthopBytes = append(nexthopBytes, addr...)
 	nexthop := &PathAttributeNextHop{}
@@ -252,7 +252,7 @@ func Test_Validate_invalid_nexthop_lo(t *testing.T) {
 			message := bgpupdate().Body.(*BGPUpdate)
 
 			// invalid nexthop
-			addr := net.ParseIP("127.0.0.1").To4()
+			addr := netip.MustParseAddr("127.0.0.1").AsSlice()
 			nexthopBytes := []byte{byte(PathAttrFlags[BGP_ATTR_TYPE_NEXT_HOP]), 3, 4}
 			nexthopBytes = append(nexthopBytes, addr...)
 			nexthop := &PathAttributeNextHop{}
@@ -281,7 +281,7 @@ func Test_Validate_invalid_nexthop_de(t *testing.T) {
 	message := bgpupdate().Body.(*BGPUpdate)
 
 	// invalid nexthop
-	addr := net.ParseIP("224.0.0.1").To4()
+	addr := netip.MustParseAddr("224.0.0.1").AsSlice()
 	nexthopBytes := []byte{byte(PathAttrFlags[BGP_ATTR_TYPE_NEXT_HOP]), 3, 4}
 	nexthopBytes = append(nexthopBytes, addr...)
 	nexthop := &PathAttributeNextHop{}

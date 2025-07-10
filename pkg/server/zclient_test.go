@@ -16,7 +16,7 @@
 package server
 
 import (
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -47,12 +47,11 @@ func Test_newPathFromIPRouteMessage(t *testing.T) {
 			Message: message,
 			Safi:    zebra.SafiUnicast, // 1, FRR_ZAPI5_SAFI_UNICAST is same
 			Prefix: zebra.Prefix{
-				Prefix:    net.ParseIP("192.168.100.0"),
-				PrefixLen: uint8(24),
+				Prefix: netip.MustParsePrefix("192.168.100.0/24"),
 			},
 			Nexthops: []zebra.Nexthop{
 				{
-					Gate: net.ParseIP("0.0.0.0"),
+					Gate: netip.MustParseAddr("0.0.0.0"),
 				},
 				{
 					Ifindex: uint32(1),
@@ -100,9 +99,8 @@ func Test_newPathFromIPRouteMessage(t *testing.T) {
 		if v < 5 {
 			b.API = zebra.BackwardIPv6RouteAdd.ToEach(v, software)
 		}
-		b.Prefix.Prefix = net.ParseIP("2001:db8:0:f101::")
-		b.Prefix.PrefixLen = uint8(64)
-		b.Nexthops = []zebra.Nexthop{{Gate: net.ParseIP("::")}}
+		b.Prefix.Prefix = netip.MustParsePrefix("2001:db8:0:f101::/64")
+		b.Nexthops = []zebra.Nexthop{{Gate: netip.MustParseAddr("::")}}
 		m.Header = *h
 		m.Body = b
 

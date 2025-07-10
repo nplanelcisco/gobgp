@@ -20,6 +20,8 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -53,7 +55,7 @@ func injectMrt() error {
 		reader = fileReader
 	}
 
-	if mrtOpts.NextHop != nil && !mrtOpts.SkipV4 && !mrtOpts.SkipV6 {
+	if !mrtOpts.NextHop.IsValid() && !mrtOpts.SkipV4 && !mrtOpts.SkipV6 {
 		fmt.Println("You should probably specify either --no-ipv4 or --no-ipv6 when overwriting nexthop, unless your dump contains only one type of routes")
 	}
 
@@ -142,7 +144,7 @@ func injectMrt() error {
 					var attrs []bgp.PathAttributeInterface
 					switch subType {
 					case mrt.RIB_IPV4_UNICAST, mrt.RIB_IPV4_UNICAST_ADDPATH:
-						if mrtOpts.NextHop != nil {
+						if !mrtOpts.NextHop.IsValid() {
 							for i, attr := range e.PathAttributes {
 								if attr.GetType() == bgp.BGP_ATTR_TYPE_NEXT_HOP {
 									e.PathAttributes[i] = bgp.NewPathAttributeNextHop(mrtOpts.NextHop.String())
@@ -159,7 +161,7 @@ func injectMrt() error {
 							} else {
 								a := attr.(*bgp.PathAttributeMpReachNLRI)
 								nexthop := a.Nexthop.String()
-								if mrtOpts.NextHop != nil {
+								if !mrtOpts.NextHop.IsValid() {
 									nexthop = mrtOpts.NextHop.String()
 								}
 								attrs = append(attrs, bgp.NewPathAttributeMpReachNLRI(nexthop, nlri))
@@ -256,7 +258,10 @@ func newMrtCmd() *cobra.Command {
 	mrtCmd.PersistentFlags().BoolVarP(&mrtOpts.SkipV4, "no-ipv4", "", false, "Do not import IPv4 routes")
 	mrtCmd.PersistentFlags().BoolVarP(&mrtOpts.SkipV6, "no-ipv6", "", false, "Do not import IPv6 routes")
 	mrtCmd.PersistentFlags().IntVarP(&mrtOpts.QueueSize, "queue-size", "", 1<<10, "Maximum number of updates to keep queued")
-	mrtCmd.PersistentFlags().IPVarP(&mrtOpts.NextHop, "nexthop", "", nil, "Overwrite nexthop")
+	nexthop := net.IP{}
+	mrtCmd.PersistentFlags().IPVarP(&nexthop, "nexthop", "", nil, "Overwrite nexthop")
 	mrtCmd.PersistentFlags().Uint32VarP(&mrtOpts.PeerASN, "peer-asn", "", 0, "Inject prefixes only from specified AS number")
+
+	mrtOpts.NextHop, _ = netip.ParseAddr(nexthop.String())
 	return mrtCmd
 }

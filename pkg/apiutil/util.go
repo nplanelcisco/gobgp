@@ -18,7 +18,7 @@ package apiutil
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/google/uuid"
@@ -95,8 +95,8 @@ type Path struct {
 	Stale              bool                         `json:"stale"`
 	Withdrawal         bool                         `json:"withdrawal,omitempty"`
 	PeerASN            uint32                       `json:"peer-asn,omitempty"`
-	PeerID             net.IP                       `json:"peer-id,omitempty"`
-	PeerAddress        net.IP                       `json:"peer-address,omitempty"`
+	PeerID             netip.Addr                   `json:"peer-id,omitempty"`
+	PeerAddress        netip.Addr                   `json:"peer-address,omitempty"`
 	IsFromExternal     bool                         `json:"is-from-external,omitempty"`
 	NoImplicitWithdraw bool                         `json:"no-implicit-withdraw,omitempty"`
 	IsNexthopInvalid   bool                         `json:"is-nexthop-invalid,omitempty"`
@@ -109,20 +109,20 @@ type Path struct {
 type PeerConf struct {
 	PeerASN           uint32
 	LocalASN          uint32
-	NeighborAddress   net.IP
+	NeighborAddress   netip.Addr
 	NeighborInterface string
 }
 type PeerState struct {
 	PeerASN         uint32
 	LocalASN        uint32
-	NeighborAddress net.IP
+	NeighborAddress netip.Addr
 	SessionState    bgp.FSMState
 	AdminState      api.PeerState_AdminState
-	RouterID        net.IP
+	RouterID        netip.Addr
 	RemoteCap       []bgp.ParameterCapabilityInterface
 }
 type Transport struct {
-	LocalAddress net.IP
+	LocalAddress netip.Addr
 	LocalPort    uint32
 	RemotePort   uint32
 }
@@ -146,6 +146,8 @@ func NewDestination(dst *api.Destination) *Destination {
 	for _, p := range dst.Paths {
 		nlri, _ := GetNativeNlri(p)
 		attrs, _ := GetNativePathAttributes(p)
+		peerID, _ := netip.ParseAddr(p.SourceId)
+		peerAddress, _ := netip.ParseAddr(p.NeighborIp)
 		l = append(l, &Path{
 			Nlri:            nlri,
 			Age:             p.Age.AsTime().Unix(),
@@ -154,8 +156,8 @@ func NewDestination(dst *api.Destination) *Destination {
 			Stale:           p.Stale,
 			SendMaxFiltered: p.SendMaxFiltered,
 			Withdrawal:      p.IsWithdraw,
-			PeerID:          net.ParseIP(p.SourceId),
-			PeerAddress:     net.ParseIP(p.NeighborIp),
+			PeerID:          peerID,
+			PeerAddress:     peerAddress,
 		})
 	}
 	return &Destination{Paths: l}

@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/netip"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -506,10 +507,11 @@ func api2Path(resource api.TableType, path *api.Path, isWithdraw bool) (*table.P
 	var nlri bgp.AddrPrefixInterface
 	var nexthop string
 
+	addr, _ := netip.ParseAddr(path.SourceId)
 	if path.SourceAsn != 0 {
 		pi = &table.PeerInfo{
 			AS: path.SourceAsn,
-			ID: net.ParseIP(path.SourceId),
+			ID: addr,
 		}
 	}
 
@@ -556,7 +558,11 @@ func api2Path(resource api.TableType, path *api.Path, isWithdraw bool) (*table.P
 		return nil, fmt.Errorf("nexthop not found")
 	}
 	rf := bgp.NewFamily(uint16(path.Family.Afi), uint8(path.Family.Safi))
-	if resource != api.TableType_TABLE_TYPE_VRF && rf == bgp.RF_IPv4_UC && net.ParseIP(nexthop).To4() != nil {
+	nexthopAddr, err := netip.ParseAddr(nexthop)
+	if err != nil || !nexthopAddr.IsValid() {
+		return nil, fmt.Errorf("invalid nexthop address: %s", nexthop)
+	}
+	if resource != api.TableType_TABLE_TYPE_VRF && rf == bgp.RF_IPv4_UC && nexthopAddr.Is4() {
 		pattrs = append(pattrs, bgp.NewPathAttributeNextHop(nexthop))
 	} else {
 		pattrs = append(pattrs, bgp.NewPathAttributeMpReachNLRI(nexthop, nlri))
@@ -1225,7 +1231,7 @@ func (s *server) DeleteDynamicNeighbor(ctx context.Context, r *api.DeleteDynamic
 }
 
 func newPrefixFromApiStruct(a *api.Prefix) (*table.Prefix, error) {
-	_, prefix, err := net.ParseCIDR(a.IpPrefix)
+	prefix, err := netip.ParsePrefix(a.IpPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -1234,7 +1240,7 @@ func newPrefixFromApiStruct(a *api.Prefix) (*table.Prefix, error) {
 		rf = bgp.RF_IPv6_UC
 	}
 	return &table.Prefix{
-		Prefix:             prefix,
+		Prefix:             &prefix,
 		AddressFamily:      rf,
 		MasklengthRangeMin: uint8(a.MaskLengthMin),
 		MasklengthRangeMax: uint8(a.MaskLengthMax),
@@ -1336,13 +1342,13 @@ func newDefinedSetFromApiStruct(a *api.DefinedSet) (table.DefinedSet, error) {
 		}
 		return table.NewPrefixSetFromApiStruct(a.Name, prefixes)
 	case api.DefinedType_DEFINED_TYPE_NEIGHBOR:
-		list := make([]net.IPNet, 0, len(a.List))
+		list := make([]netip.Prefix, 0, len(a.List))
 		for _, x := range a.List {
-			_, addr, err := net.ParseCIDR(x)
+			addr, err := netip.ParsePrefix(x)
 			if err != nil {
 				return nil, fmt.Errorf("invalid address or prefix: %s", x)
 			}
-			list = append(list, *addr)
+			list = append(list, addr)
 		}
 		return table.NewNeighborSetFromApiStruct(a.Name, list)
 	case api.DefinedType_DEFINED_TYPE_AS_PATH:
@@ -2155,12 +2161,12 @@ func newRoaListFromTableStructList(origin []*table.ROA) []*api.Roa {
 	for _, r := range origin {
 		host, portStr, _ := net.SplitHostPort(r.Src)
 		port, _ := strconv.ParseUint(portStr, 10, 32)
-		ones, _ := r.Network.Mask.Size()
+		ones := r.Network.Bits()
 		l = append(l, &api.Roa{
 			Asn:       r.AS,
 			Maxlen:    uint32(r.MaxLen),
 			Prefixlen: uint32(ones),
-			Prefix:    r.Network.IP.String(),
+			Prefix:    r.Network.String(),
 			Conf: &api.RPKIConf{
 				Address:    host,
 				RemotePort: uint32(port),
@@ -2235,7 +2241,12 @@ func (s *server) GetBgp(ctx context.Context, r *api.GetBgpRequest) (*api.GetBgpR
 	return s.bgpServer.GetBgp(ctx, r)
 }
 
-func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
+func newGlobalFromAPIStruct(a *api.Global) (*oc.Global, error) {
+	routerID, err := netip.ParseAddr(a.RouterId)
+	if err != nil || !routerID.Is4() {
+		return nil, fmt.Errorf("invalid router-id format: %s", a.RouterId)
+	}
+
 	families := make([]oc.AfiSafi, 0, len(a.Families))
 	for _, f := range a.Families {
 		name := oc.IntToAfiSafiTypeMap[int(f)]
@@ -2259,7 +2270,7 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 	global := &oc.Global{
 		Config: oc.GlobalConfig{
 			As:               a.Asn,
-			RouterId:         a.RouterId,
+			RouterId:         routerID,
 			Port:             a.ListenPort,
 			LocalAddressList: a.ListenAddresses,
 		},
@@ -2314,7 +2325,7 @@ func newGlobalFromAPIStruct(a *api.Global) *oc.Global {
 			},
 		}
 	}
-	return global
+	return global, nil
 }
 
 func (s *server) StartBgp(ctx context.Context, r *api.StartBgpRequest) (*api.StartBgpResponse, error) {

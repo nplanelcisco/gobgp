@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"syscall"
 	"unsafe"
@@ -133,7 +134,7 @@ func newSockaddrIn(addr string) sockaddrIn {
 			ssLen: 16,
 		}
 	}
-	v := net.ParseIP(addr).To4()
+	v := netip.ParseAddr(addr).To4()
 	return sockaddrIn{
 		ssAddr:   uint32(v[3])<<24 | uint32(v[2])<<16 | uint32(v[1])<<8 | uint32(v[0]),
 		ssLen:    16,

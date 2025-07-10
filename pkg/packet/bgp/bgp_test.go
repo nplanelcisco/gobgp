@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -144,7 +145,7 @@ func Test_RouteTargetMembershipNLRIString(t *testing.T) {
 	buf[0] = 96 // in bit length
 	binary.BigEndian.PutUint32(buf[1:5], 65546)
 	buf[5] = byte(EC_TYPE_TRANSITIVE_IP4_SPECIFIC) // typehigh
-	ip := net.ParseIP("10.0.0.1").To4()
+	ip := netip.MustParseAddr("10.0.0.1").AsSlice()
 	copy(buf[7:11], []byte(ip))
 	binary.BigEndian.PutUint16(buf[11:], 65000)
 	r = &RouteTargetMembershipNLRI{}
@@ -683,17 +684,17 @@ func Test_FlowSpecNlriVPN(t *testing.T) {
 func Test_EVPNIPPrefixRoute(t *testing.T) {
 	assert := assert.New(t)
 	rd, _ := ParseRouteDistinguisher("100:100")
+	addr := netip.AddrFrom4([4]byte{10, 10, 10, 0})
 	r := &EVPNIPPrefixRoute{
 		RD: rd,
 		ESI: EthernetSegmentIdentifier{
 			Type:  ESI_ARBITRARY,
 			Value: make([]byte, 9),
 		},
-		ETag:           10,
-		IPPrefixLength: 24,
-		IPPrefix:       net.IP{10, 10, 10, 0},
-		GWIPAddress:    net.IP{10, 10, 10, 10},
-		Label:          1000,
+		ETag:        10,
+		IPPrefix:    netip.PrefixFrom(addr, 24),
+		GWIPAddress: netip.AddrFrom4([4]byte{10, 10, 10, 10}),
+		Label:       1000,
 	}
 	n1 := NewEVPNNLRI(EVPN_IP_PREFIX, r)
 	buf1, err := n1.Serialize()
@@ -937,14 +938,14 @@ func Test_MpReachNLRIWithIPv6PrefixWithIPv4Peering(t *testing.T) {
 	assert.Equal(uint16(0x1e), p.Length)
 	assert.Equal(uint16(AFI_IP6), p.AFI)
 	assert.Equal(uint8(SAFI_UNICAST), p.SAFI)
-	assert.Equal(net.ParseIP("::ffff:172.20.0.1"), p.Nexthop)
-	assert.Equal(net.ParseIP(""), p.LinkLocalNexthop)
+	assert.Equal(netip.MustParseAddr("::ffff:172.20.0.1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr(""), p.LinkLocalNexthop)
 	value := []AddrPrefixInterface{
 		NewIPv6AddrPrefix(64, "2001:db8:1:1::"),
 	}
 	assert.Equal(value, p.Value)
 	// Set NextHop as IPv4 address (because IPv4 peering)
-	p.Nexthop = net.ParseIP("172.20.0.1")
+	p.Nexthop = netip.MustParseAddr("172.20.0.1")
 	// Test Serialize()
 	bufout, err := p.Serialize()
 	assert.NoError(err)
@@ -976,7 +977,7 @@ func Test_MpReachNLRIWithIPv6(t *testing.T) {
 	assert.Equal(uint16(0x1e), p.Length)
 	assert.Equal(uint16(AFI_IP6), p.AFI)
 	assert.Equal(uint8(SAFI_UNICAST), p.SAFI)
-	assert.Equal(net.ParseIP("2001:db8:1::1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr("2001:db8:1::1"), p.Nexthop)
 	value := []AddrPrefixInterface{
 		NewIPv6AddrPrefix(64, "2001:db8:53::"),
 	}
@@ -1035,8 +1036,8 @@ func Test_MpReachNLRIWithIPv6PrefixWithLinkLocalNexthop(t *testing.T) {
 	assert.Equal(uint16(0x2c), p.Length)
 	assert.Equal(uint16(AFI_IP6), p.AFI)
 	assert.Equal(uint8(SAFI_UNICAST), p.SAFI)
-	assert.Equal(net.ParseIP("2001:db8:1::1"), p.Nexthop)
-	assert.Equal(net.ParseIP("fe80::1"), p.LinkLocalNexthop)
+	assert.Equal(netip.MustParseAddr("2001:db8:1::1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr("fe80::1"), p.LinkLocalNexthop)
 	value := []AddrPrefixInterface{
 		NewIPv6AddrPrefix(48, "2010:ab8:1::"),
 	}
@@ -1072,8 +1073,8 @@ func Test_MpReachNLRIWithVPNv4Prefix(t *testing.T) {
 	assert.Equal(uint16(0x20), p.Length)
 	assert.Equal(uint16(AFI_IP), p.AFI)
 	assert.Equal(uint8(SAFI_MPLS_VPN), p.SAFI)
-	assert.Equal(net.ParseIP("172.20.0.1").To4(), p.Nexthop)
-	assert.Equal(net.ParseIP(""), p.LinkLocalNexthop)
+	assert.Equal(netip.MustParseAddr("172.20.0.1").As4(), p.Nexthop)
+	assert.Equal(netip.MustParseAddr(""), p.LinkLocalNexthop)
 	value := []AddrPrefixInterface{
 		NewLabeledVPNIPAddrPrefix(24, "10.1.1.0", *NewMPLSLabelStack(16),
 			NewRouteDistinguisherTwoOctetAS(65000, 100)),
@@ -1116,8 +1117,8 @@ func Test_MpReachNLRIWithVPNv6Prefix(t *testing.T) {
 	assert.Equal(uint16(0x39), p.Length)
 	assert.Equal(uint16(AFI_IP6), p.AFI)
 	assert.Equal(uint8(SAFI_MPLS_VPN), p.SAFI)
-	assert.Equal(net.ParseIP("2001:db8:1::1"), p.Nexthop)
-	assert.Equal(net.ParseIP(""), p.LinkLocalNexthop)
+	assert.Equal(netip.MustParseAddr("2001:db8:1::1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr(""), p.LinkLocalNexthop)
 	value := []AddrPrefixInterface{
 		NewLabeledVPNIPv6AddrPrefix(124, "2001:1::", *NewMPLSLabelStack(16),
 			NewRouteDistinguisherTwoOctetAS(65000, 100)),
@@ -1152,7 +1153,7 @@ func Test_MpReachNLRIWithIPv4PrefixWithIPv6Nexthop(t *testing.T) {
 	assert.Equal(uint16(0x19), p.Length)
 	assert.Equal(uint16(AFI_IP), p.AFI)
 	assert.Equal(uint8(SAFI_UNICAST), p.SAFI)
-	assert.Equal(net.ParseIP("2001:db8:1::1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr("2001:db8:1::1"), p.Nexthop)
 	value := []AddrPrefixInterface{
 		NewIPAddrPrefix(24, "192.168.10.0"),
 	}
@@ -1183,7 +1184,7 @@ func Test_MpReachNLRIWithImplicitPrefix(t *testing.T) {
 	assert.Equal(BGPAttrFlag(0x80), p.Flags)
 	assert.Equal(BGPAttrType(0xe), p.Type)
 	assert.Equal(uint16(0x11), p.Length)
-	assert.Equal(net.ParseIP("2001:db8:1::1"), p.Nexthop)
+	assert.Equal(netip.MustParseAddr("2001:db8:1::1"), p.Nexthop)
 	// AFI/SAFI/NLRI are derived from the Rib header
 	// which we don't have here.
 	// assert.Equal(prefix.AFI(), p.AFI)
@@ -1369,10 +1370,10 @@ func TestContainsCIDR(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, prefixNet1, _ := net.ParseCIDR(tt.prefix1)
-			_, prefixNet2, _ := net.ParseCIDR(tt.prefix2)
+			prefixNet1 := netip.MustParsePrefix(tt.prefix1)
+			prefixNet2 := netip.MustParsePrefix(tt.prefix2)
 
-			result := ContainsCIDR(prefixNet1, prefixNet2)
+			result := ContainsCIDR(&prefixNet1, &prefixNet2)
 			assert.Equal(t, tt.result, result)
 		})
 	}
@@ -2294,7 +2295,7 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 	tests := []struct {
 		tlv  LsTLVIPReachability
 		ipv6 bool
-		want net.IPNet
+		want netip.Prefix
 	}{
 		{
 			tlv: LsTLVIPReachability{
@@ -2302,10 +2303,7 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 				Prefix:       []byte{0x0a},
 			},
 			ipv6: false,
-			want: net.IPNet{
-				IP:   net.IPv4(10, 0, 0, 0),
-				Mask: net.CIDRMask(8, 32),
-			},
+			want: netip.PrefixFrom(netip.AddrFrom4([4]byte{10, 0, 0, 0}), 8),
 		},
 		{
 			tlv: LsTLVIPReachability{
@@ -2313,10 +2311,7 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 				Prefix:       []byte{0xaa},
 			},
 			ipv6: false,
-			want: net.IPNet{
-				IP:   net.IPv4(160, 0, 0, 0),
-				Mask: net.CIDRMask(4, 32),
-			},
+			want: netip.PrefixFrom(netip.AddrFrom4([4]byte{160, 0, 0, 0}), 4),
 		},
 		{
 			tlv: LsTLVIPReachability{
@@ -2324,10 +2319,7 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 				Prefix:       []byte{0x0a, 0x0a, 0x0a, 0xfe},
 			},
 			ipv6: false,
-			want: net.IPNet{
-				IP:   net.IPv4(10, 10, 10, 254),
-				Mask: net.CIDRMask(31, 32),
-			},
+			want: netip.PrefixFrom(netip.AddrFrom4([4]byte{10, 10, 10, 254}), 31),
 		},
 		{
 			tlv: LsTLVIPReachability{
@@ -2335,10 +2327,7 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 				Prefix:       []byte{0x20, 0x01},
 			},
 			ipv6: true,
-			want: net.IPNet{
-				IP:   net.ParseIP("2001::"),
-				Mask: net.CIDRMask(16, 128),
-			},
+			want: netip.PrefixFrom(netip.MustParseAddr("2001::"), 16),
 		},
 		{
 			tlv: LsTLVIPReachability{
@@ -2346,17 +2335,13 @@ func Test_LsTLVIPReachabilityToIPNet(t *testing.T) {
 				Prefix:       []byte{0x20, 0x01, 0x0d},
 			},
 			ipv6: true,
-			want: net.IPNet{
-				IP:   net.ParseIP("2001:d00::"),
-				Mask: net.CIDRMask(24, 128),
-			},
+			want: netip.PrefixFrom(netip.MustParseAddr("2001::d00::"), 24),
 		},
 	}
 
 	for _, test := range tests {
 		got := test.tlv.ToIPNet(test.ipv6)
-		assert.Equal(test.want.IP.String(), got.IP.String())
-		assert.Equal(test.want.Mask.String(), got.Mask.String())
+		assert.Equal(test.want.String(), got.String())
 	}
 }
 

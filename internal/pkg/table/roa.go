@@ -16,7 +16,7 @@
 package table
 
 import (
-	"net"
+	"net/netip"
 	"sort"
 
 	"github.com/k-sone/critbitgo"
@@ -27,28 +27,28 @@ import (
 
 type ROA struct {
 	Family  int
-	Network *net.IPNet
+	Network *netip.Prefix
 	MaxLen  uint8
 	AS      uint32
 	Src     string
 }
 
 func NewROA(family int, prefixByte []byte, prefixLen uint8, maxLen uint8, as uint32, src string) *ROA {
-	p := make([]byte, len(prefixByte))
-	bits := net.IPv4len * 8
+	bits := 32
 	if family == bgp.AFI_IP6 {
-		bits = net.IPv6len * 8
+		bits = 128
 	}
-	copy(p, prefixByte)
+	addr, ok := netip.AddrFromSlice(prefixByte)
+	if !ok || !addr.IsValid() {
+		return nil
+	}
+	prefix := netip.PrefixFrom(addr, bits)
 	return &ROA{
-		Family: family,
-		Network: &net.IPNet{
-			IP:   p,
-			Mask: net.CIDRMask(int(prefixLen), bits),
-		},
-		MaxLen: maxLen,
-		AS:     as,
-		Src:    src,
+		Family:  family,
+		Network: &prefix,
+		MaxLen:  maxLen,
+		AS:      as,
+		Src:     src,
 	}
 }
 
@@ -60,7 +60,7 @@ func (r *ROA) Equal(roa *ROA) bool {
 }
 
 type roaBucket struct {
-	network *net.IPNet
+	network *netip.Prefix
 	entries []*ROA
 }
 
@@ -162,8 +162,8 @@ func (rt *ROATable) Delete(roa *ROA) {
 
 func (rt *ROATable) DeleteAll(network string) {
 	for _, tree := range rt.trees {
-		deleteNetworks := make([]*net.IPNet, 0, tree.Size())
-		tree.Walk(nil, func(n *net.IPNet, v any) bool {
+		deleteNetworks := make([]*netip.Prefix, 0, tree.Size())
+		tree.Walk(nil, func(n *netip.Prefix, v any) bool {
 			b, _ := v.(*roaBucket)
 			newEntries := make([]*ROA, 0, len(b.entries))
 			for _, r := range b.entries {
@@ -233,9 +233,9 @@ func (rt *ROATable) Validate(path *Path) *Validation {
 	}
 
 	r := nlriToIPNet(path.GetNlri())
-	prefixLen, _ := r.Mask.Size()
+	prefixLen := r.Bits()
 	var bucket *roaBucket
-	tree.WalkMatch(r, func(r *net.IPNet, v any) bool {
+	tree.WalkMatch(r, func(r *netip.Prefix, v any) bool {
 		bucket, _ = v.(*roaBucket)
 		for _, r := range bucket.entries {
 			if prefixLen <= int(r.MaxLen) {
@@ -273,7 +273,7 @@ func (rt *ROATable) Info(family bgp.Family) (map[string]uint32, map[string]uint3
 	prefixes := make(map[string]uint32)
 
 	if tree, ok := rt.trees[family]; ok {
-		tree.Walk(nil, func(_ *net.IPNet, v any) bool {
+		tree.Walk(nil, func(_ *netip.Prefix, v any) bool {
 			b, _ := v.(*roaBucket)
 			tmpRecords := make(map[string]uint32)
 			for _, roa := range b.entries {
@@ -305,7 +305,7 @@ func (rt *ROATable) List(family bgp.Family) ([]*ROA, error) {
 	l := make([]*ROA, 0)
 	for _, rf := range rfList {
 		if tree, ok := rt.trees[rf]; ok {
-			tree.Walk(nil, func(_ *net.IPNet, v any) bool {
+			tree.Walk(nil, func(_ *netip.Prefix, v any) bool {
 				b, _ := v.(*roaBucket)
 				l = append(l, b.entries...)
 				return true

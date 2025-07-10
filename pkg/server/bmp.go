@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -213,9 +214,9 @@ func (b *bmpClient) loop() {
 						}
 					case *watchEventBestPath:
 						info := &table.PeerInfo{
-							Address: net.ParseIP("0.0.0.0").To4(),
+							Address: netip.MustParseAddr("0.0.0.0"),
 							AS:      b.s.bgpConfig.Global.Config.As,
-							ID:      net.ParseIP(b.s.bgpConfig.Global.Config.RouterId).To4(),
+							ID:      b.s.bgpConfig.Global.Config.RouterId,
 						}
 						for _, p := range msg.PathList {
 							u := table.CreateUpdateMsgFromPaths([]*table.Path{p})[0]

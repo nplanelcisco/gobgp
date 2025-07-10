@@ -1,7 +1,7 @@
 package table
 
 import (
-	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,12 +40,12 @@ func strToASParam(str string) *bgp.PathAttributeAsPath {
 
 func validateOne(rt *ROATable, cidr, aspathStr string) oc.RpkiValidationResultType {
 	var nlri bgp.AddrPrefixInterface
-	ip, r, _ := net.ParseCIDR(cidr)
-	length, _ := r.Mask.Size()
-	if ip.To4() == nil {
-		nlri = bgp.NewIPv6AddrPrefix(uint8(length), ip.String())
+	prefix, _ := netip.ParsePrefix(cidr)
+	length := prefix.Bits()
+	if prefix.Addr().Is6() {
+		nlri = bgp.NewIPv6AddrPrefix(uint8(length), prefix.String())
 	} else {
-		nlri = bgp.NewIPAddrPrefix(uint8(length), ip.String())
+		nlri = bgp.NewIPAddrPrefix(uint8(length), prefix.String())
 	}
 	attrs := []bgp.PathAttributeInterface{strToASParam(aspathStr)}
 	path := NewPath(&PeerInfo{LocalAS: 65500}, nlri, false, attrs, time.Now(), false)
@@ -57,8 +57,8 @@ func TestValidate0(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("192.168.0.0").To4(), 24, 32, 100, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("192.168.0.0").To4(), 24, 24, 200, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("192.168.0.0").AsSlice(), 24, 32, 100, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("192.168.0.0").AsSlice(), 24, 24, 200, ""))
 
 	r := validateOne(table, "192.168.0.0/24", "100")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -83,7 +83,7 @@ func TestValidate1(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 16, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 16, 65000, ""))
 
 	r := validateOne(table, "10.0.0.0/16", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -110,7 +110,7 @@ func TestValidate3(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 16, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 16, 65000, ""))
 
 	r := validateOne(table, "10.0.0.0/8", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND)
@@ -119,7 +119,7 @@ func TestValidate3(t *testing.T) {
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_INVALID)
 
 	table = NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 65000, ""))
 
 	r = validateOne(table, "10.0.0.0/17", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -129,8 +129,8 @@ func TestValidate4(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 16, 65000, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 16, 65001, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 16, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 16, 65001, ""))
 
 	r := validateOne(table, "10.0.0.0/16", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -143,8 +143,8 @@ func TestValidate5(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 17, 17, 65000, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.128.0").To4(), 17, 17, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 17, 17, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.128.0").AsSlice(), 17, 17, 65000, ""))
 
 	r := validateOne(table, "10.0.0.0/16", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND)
@@ -154,7 +154,7 @@ func TestValidate6(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 8, 32, 0, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 8, 32, 0, ""))
 
 	r := validateOne(table, "10.0.0.0/7", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND)
@@ -170,7 +170,7 @@ func TestValidate7(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 65000, ""))
 
 	r := validateOne(table, "10.0.0.0/24", "{65000}")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_NOT_FOUND)
@@ -186,8 +186,8 @@ func TestValidate8(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 0, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 0, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 65000, ""))
 
 	r := validateOne(table, "10.0.0.0/24", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -200,8 +200,8 @@ func TestValidate9(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 24, 24, 65000, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 65001, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 24, 24, 65000, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 65001, ""))
 
 	r := validateOne(table, "10.0.0.0/24", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_VALID)
@@ -214,8 +214,8 @@ func TestValidate10(t *testing.T) {
 	assert := assert.New(t)
 
 	table := NewROATable(logger)
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 24, 24, 0, ""))
-	table.Add(NewROA(bgp.AFI_IP, net.ParseIP("10.0.0.0").To4(), 16, 24, 65001, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 24, 24, 0, ""))
+	table.Add(NewROA(bgp.AFI_IP, netip.MustParseAddr("10.0.0.0").AsSlice(), 16, 24, 65001, ""))
 
 	r := validateOne(table, "10.0.0.0/24", "65000")
 	assert.Equal(r, oc.RPKI_VALIDATION_RESULT_TYPE_INVALID)

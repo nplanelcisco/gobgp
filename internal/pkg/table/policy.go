@@ -18,7 +18,7 @@ package table
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
@@ -36,7 +36,7 @@ import (
 
 type PolicyOptions struct {
 	Info       *PeerInfo
-	OldNextHop net.IP
+	OldNextHop netip.Addr
 	Validate   func(*Path) *Validation
 }
 
@@ -267,7 +267,7 @@ func (l DefinedSetList) Less(i, j int) bool {
 }
 
 type Prefix struct {
-	Prefix             *net.IPNet
+	Prefix             *netip.Prefix
 	AddressFamily      bgp.Family
 	MasklengthRangeMax uint8
 	MasklengthRangeMin uint8
@@ -279,20 +279,20 @@ func (p *Prefix) Match(path *Path) bool {
 		return false
 	}
 
-	var pAddr net.IP
+	var pAddr netip.Prefix
 	var pMasklen uint8
 	switch rf {
 	case bgp.RF_IPv4_UC:
 		pAddr = path.GetNlri().(*bgp.IPAddrPrefix).Prefix
-		pMasklen = path.GetNlri().(*bgp.IPAddrPrefix).Length
+		pMasklen = uint8(pAddr.Bits())
 	case bgp.RF_IPv6_UC:
 		pAddr = path.GetNlri().(*bgp.IPv6AddrPrefix).Prefix
-		pMasklen = path.GetNlri().(*bgp.IPv6AddrPrefix).Length
+		pMasklen = uint8(pAddr.Bits())
 	default:
 		return false
 	}
 
-	return p.MasklengthRangeMin <= pMasklen && pMasklen <= p.MasklengthRangeMax && p.Prefix.Contains(pAddr)
+	return p.MasklengthRangeMin <= pMasklen && pMasklen <= p.MasklengthRangeMax && p.Prefix.Contains(pAddr.Addr())
 }
 
 func (lhs *Prefix) Equal(rhs *Prefix) bool {
@@ -306,27 +306,13 @@ func (lhs *Prefix) Equal(rhs *Prefix) bool {
 }
 
 func (p *Prefix) PrefixString() string {
-	isZeros := func(p net.IP) bool {
-		for i := range p {
-			if p[i] != 0 {
-				return false
-			}
-		}
-		return true
-	}
-
-	ip := p.Prefix.IP
-	if p.AddressFamily == bgp.RF_IPv6_UC && isZeros(ip[:10]) && ip[10] == 0xff && ip[11] == 0xff {
-		m, _ := p.Prefix.Mask.Size()
-		return fmt.Sprintf("::FFFF:%s/%d", ip.To16(), m)
-	}
 	return p.Prefix.String()
 }
 
 var _regexpPrefixRange = regexp.MustCompile(`(\d+)\.\.(\d+)`)
 
 func NewPrefix(c oc.Prefix) (*Prefix, error) {
-	_, prefix, err := net.ParseCIDR(c.IpPrefix)
+	prefix, err := netip.ParsePrefix(c.IpPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -336,13 +322,13 @@ func NewPrefix(c oc.Prefix) (*Prefix, error) {
 		rf = bgp.RF_IPv6_UC
 	}
 	p := &Prefix{
-		Prefix:        prefix,
+		Prefix:        &prefix,
 		AddressFamily: rf,
 	}
 	maskRange := c.MasklengthRange
 
 	if maskRange == "" {
-		l, _ := prefix.Mask.Size()
+		l := prefix.Bits()
 		maskLength := uint8(l)
 		p.MasklengthRangeMax = maskLength
 		p.MasklengthRangeMin = maskLength
@@ -389,7 +375,7 @@ func (lhs *PrefixSet) Append(arg DefinedSet) error {
 		return fmt.Errorf("can't append different family")
 	}
 	//nolint:errcheck // tree.Add won't return an error
-	rhs.tree.Walk(nil, func(r *net.IPNet, v any) bool {
+	rhs.tree.Walk(nil, func(r *netip.Prefix, v any) bool {
 		w, ok, _ := lhs.tree.Get(r)
 		if ok {
 			rp := v.([]*Prefix)
@@ -410,7 +396,7 @@ func (lhs *PrefixSet) Remove(arg DefinedSet) error {
 		return fmt.Errorf("type cast failed")
 	}
 	//nolint:errcheck // tree.Delete/tree.Add won't return an error
-	rhs.tree.Walk(nil, func(r *net.IPNet, v any) bool {
+	rhs.tree.Walk(nil, func(r *netip.Prefix, v any) bool {
 		w, ok, _ := lhs.tree.Get(r)
 		if !ok {
 			return true
@@ -446,7 +432,7 @@ func (lhs *PrefixSet) Replace(arg DefinedSet) error {
 
 func (s *PrefixSet) List() []string {
 	var list []string
-	s.tree.Walk(nil, func(_ *net.IPNet, v any) bool {
+	s.tree.Walk(nil, func(_ *netip.Prefix, v any) bool {
 		ps := v.([]*Prefix)
 		for _, p := range ps {
 			list = append(list, fmt.Sprintf("%s %d..%d", p.PrefixString(), p.MasklengthRangeMin, p.MasklengthRangeMax))
@@ -458,7 +444,7 @@ func (s *PrefixSet) List() []string {
 
 func (s *PrefixSet) ToConfig() *oc.PrefixSet {
 	list := make([]oc.Prefix, 0, s.tree.Size())
-	s.tree.Walk(nil, func(_ *net.IPNet, v any) bool {
+	s.tree.Walk(nil, func(_ *netip.Prefix, v any) bool {
 		ps := v.([]*Prefix)
 		for _, p := range ps {
 			list = append(list, oc.Prefix{IpPrefix: p.PrefixString(), MasklengthRange: fmt.Sprintf("%d..%d", p.MasklengthRangeMin, p.MasklengthRangeMax)})
@@ -546,7 +532,7 @@ func NewPrefixSet(c oc.PrefixSet) (*PrefixSet, error) {
 }
 
 type NextHopSet struct {
-	list []net.IPNet
+	list []netip.Prefix
 }
 
 func (s *NextHopSet) Name() string {
@@ -571,7 +557,7 @@ func (lhs *NextHopSet) Remove(arg DefinedSet) error {
 	if !ok {
 		return fmt.Errorf("type cast failed")
 	}
-	ps := make([]net.IPNet, 0, len(lhs.list))
+	ps := make([]netip.Prefix, 0, len(lhs.list))
 	for _, x := range lhs.list {
 		found := false
 		for _, y := range rhs.list {
@@ -617,31 +603,28 @@ func (s *NextHopSet) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.ToConfig())
 }
 
-func NewNextHopSetFromApiStruct(name string, list []net.IPNet) (*NextHopSet, error) {
+func NewNextHopSetFromApiStruct(name string, list []netip.Prefix) (*NextHopSet, error) {
 	return &NextHopSet{
 		list: list,
 	}, nil
 }
 
 func NewNextHopSet(c []string) (*NextHopSet, error) {
-	list := make([]net.IPNet, 0, len(c))
+	list := make([]netip.Prefix, 0, len(c))
 	for _, x := range c {
-		_, cidr, err := net.ParseCIDR(x)
+		cidr, err := netip.ParsePrefix(x)
 		if err != nil {
-			addr := net.ParseIP(x)
-			if addr == nil {
+			addr, err := netip.ParseAddr(x)
+			if err != nil || !addr.IsValid() {
 				return nil, fmt.Errorf("invalid address or prefix: %s", x)
 			}
-			mask := net.CIDRMask(32, 32)
-			if addr.To4() == nil {
-				mask = net.CIDRMask(128, 128)
+			mask := 32
+			if addr.Is6() {
+				mask = 128
 			}
-			cidr = &net.IPNet{
-				IP:   addr,
-				Mask: mask,
-			}
+			cidr = netip.PrefixFrom(addr, mask)
 		}
-		list = append(list, *cidr)
+		list = append(list, cidr)
 	}
 	return &NextHopSet{
 		list: list,
@@ -650,7 +633,7 @@ func NewNextHopSet(c []string) (*NextHopSet, error) {
 
 type NeighborSet struct {
 	name string
-	list []net.IPNet
+	list []netip.Prefix
 }
 
 func (s *NeighborSet) Name() string {
@@ -675,7 +658,7 @@ func (lhs *NeighborSet) Remove(arg DefinedSet) error {
 	if !ok {
 		return fmt.Errorf("type cast failed")
 	}
-	ps := make([]net.IPNet, 0, len(lhs.list))
+	ps := make([]netip.Prefix, 0, len(lhs.list))
 	for _, x := range lhs.list {
 		found := false
 		for _, y := range rhs.list {
@@ -724,7 +707,7 @@ func (s *NeighborSet) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.ToConfig())
 }
 
-func NewNeighborSetFromApiStruct(name string, list []net.IPNet) (*NeighborSet, error) {
+func NewNeighborSetFromApiStruct(name string, list []netip.Prefix) (*NeighborSet, error) {
 	return &NeighborSet{
 		name: name,
 		list: list,
@@ -739,24 +722,21 @@ func NewNeighborSet(c oc.NeighborSet) (*NeighborSet, error) {
 		}
 		return nil, fmt.Errorf("empty neighbor set name")
 	}
-	list := make([]net.IPNet, 0, len(c.NeighborInfoList))
+	list := make([]netip.Prefix, 0, len(c.NeighborInfoList))
 	for _, x := range c.NeighborInfoList {
-		_, cidr, err := net.ParseCIDR(x)
+		cidr, err := netip.ParsePrefix(x)
 		if err != nil {
-			addr := net.ParseIP(x)
-			if addr == nil {
+			addr, err := netip.ParseAddr(x)
+			if err != nil || !addr.IsValid() {
 				return nil, fmt.Errorf("invalid address or prefix: %s", x)
 			}
-			mask := net.CIDRMask(32, 32)
-			if addr.To4() == nil {
-				mask = net.CIDRMask(128, 128)
+			mask := 32
+			if addr.Is6() {
+				mask = 128
 			}
-			cidr = &net.IPNet{
-				IP:   addr,
-				Mask: mask,
-			}
+			cidr = netip.PrefixFrom(addr, mask)
 		}
-		list = append(list, *cidr)
+		list = append(list, cidr)
 	}
 	return &NeighborSet{
 		name: name,
@@ -1398,12 +1378,12 @@ func (c *NextHopCondition) Evaluate(path *Path, options *PolicyOptions) bool {
 	// on the "original" nexthop. The current paths' nexthop has already been
 	// set and is ready to be advertised as per:
 	// https://tools.ietf.org/html/rfc4271#section-5.1.3
-	if options != nil && options.OldNextHop != nil &&
-		!options.OldNextHop.IsUnspecified() && !options.OldNextHop.Equal(nexthop) {
+	if options != nil && options.OldNextHop.IsValid() &&
+		!options.OldNextHop.IsUnspecified() && options.OldNextHop.Compare(nexthop) != 0 {
 		nexthop = options.OldNextHop
 	}
 
-	if nexthop == nil {
+	if !nexthop.IsValid() {
 		return false
 	}
 
@@ -1463,7 +1443,7 @@ func (c *PrefixCondition) Evaluate(path *Path, _ *PolicyOptions) bool {
 	if r == nil {
 		return false
 	}
-	ones, _ := r.Mask.Size()
+	ones := r.Bits()
 	masklen := uint8(ones)
 	result := false
 	if _, ps, _ := c.set.tree.Match(r); ps != nil {
@@ -1526,11 +1506,11 @@ func (c *NeighborCondition) Evaluate(path *Path, options *PolicyOptions) bool {
 	}
 
 	neighbor := path.GetSource().Address
-	if options != nil && options.Info != nil && options.Info.Address != nil {
+	if options != nil && options.Info != nil && options.Info.Address.IsValid() {
 		neighbor = options.Info.Address
 	}
 
-	if neighbor == nil {
+	if !neighbor.IsValid() {
 		return false
 	}
 	result := false
@@ -2691,7 +2671,7 @@ func NewAsPathPrependAction(action oc.SetAsPathPrepend) (*AsPathPrependAction, e
 }
 
 type NexthopAction struct {
-	value       net.IP
+	value       netip.Addr
 	self        bool
 	peerAddress bool
 	unchanged   bool
@@ -2704,17 +2684,17 @@ func (a *NexthopAction) Type() ActionType {
 func (a *NexthopAction) Apply(path *Path, options *PolicyOptions) (*Path, error) {
 	switch {
 	case a.self:
-		if options != nil && options.Info != nil && options.Info.LocalAddress != nil {
+		if options != nil && options.Info != nil && options.Info.LocalAddress.IsValid() {
 			path.SetNexthop(options.Info.LocalAddress)
 		}
 		return path, nil
 	case a.peerAddress:
-		if options != nil && options.Info != nil && options.Info.Address != nil {
+		if options != nil && options.Info != nil && options.Info.Address.IsValid() {
 			path.SetNexthop(options.Info.Address)
 		}
 		return path, nil
 	case a.unchanged:
-		if options != nil && options.OldNextHop != nil {
+		if options != nil && options.OldNextHop.IsValid() {
 			path.SetNexthop(options.OldNextHop)
 		}
 		return path, nil
@@ -2760,8 +2740,8 @@ func NewNexthopAction(c oc.BgpNextHopType) (*NexthopAction, error) {
 			unchanged: true,
 		}, nil
 	}
-	addr := net.ParseIP(string(c))
-	if addr == nil {
+	addr, err := netip.ParseAddr(string(c))
+	if err != nil || !addr.IsValid() {
 		return nil, fmt.Errorf("invalid ip address format: %s", string(c))
 	}
 	return &NexthopAction{

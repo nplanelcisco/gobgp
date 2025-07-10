@@ -37,11 +37,9 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 		}
 		return bgp.NewPathAttributeAsPath(params), nil
 	case *api.Attribute_NextHop:
-		nexthop := net.ParseIP(a.NextHop.NextHop).To4()
-		if nexthop == nil {
-			if nexthop = net.ParseIP(a.NextHop.NextHop).To16(); nexthop == nil {
-				return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
-			}
+		nexthop, err := netip.ParseAddr(a.NextHop.NextHop)
+		if err != nil || !nexthop.Is4() || !nexthop.Is6() {
+			return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
 		}
 		return bgp.NewPathAttributeNextHop(a.NextHop.NextHop), nil
 	case *api.Attribute_MultiExitDisc:
@@ -51,22 +49,23 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 	case *api.Attribute_AtomicAggregate:
 		return bgp.NewPathAttributeAtomicAggregate(), nil
 	case *api.Attribute_Aggregator:
-		address := net.ParseIP(a.Aggregator.Address).To4()
-		if address.To4() == nil {
+		address, err := netip.ParseAddr(a.Aggregator.Address)
+		if err != nil || !address.Is4() {
 			return nil, fmt.Errorf("invalid aggregator address: %s", a.Aggregator.Address)
 		}
 		return bgp.NewPathAttributeAggregator(a.Aggregator.Asn, a.Aggregator.Address), nil
 	case *api.Attribute_Communities:
 		return bgp.NewPathAttributeCommunities(a.Communities.Communities), nil
 	case *api.Attribute_OriginatorId:
-		id := net.ParseIP(a.OriginatorId.Id).To4()
-		if id.To4() == nil {
+		id, err := netip.ParseAddr(a.OriginatorId.Id)
+		if err != nil || !id.Is4() {
 			return nil, fmt.Errorf("invalid originator id: %s", a.OriginatorId.Id)
 		}
 		return bgp.NewPathAttributeOriginatorId(a.OriginatorId.Id), nil
 	case *api.Attribute_ClusterList:
 		for _, id := range a.ClusterList.Ids {
-			if net.ParseIP(id).To4() == nil {
+			addr, err := netip.ParseAddr(id)
+			if err == nil || !addr.Is4() {
 				return nil, fmt.Errorf("invalid cluster list: %s", a.ClusterList.Ids)
 			}
 		}
@@ -81,12 +80,12 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 			return nil, err
 		}
 		nexthop := "0.0.0.0"
-		var linkLocalNexthop net.IP
+		var linkLocalNexthop netip.Addr
 		if rf.Afi() == bgp.AFI_IP6 {
 			nexthop = "::"
 			if len(a.MpReach.NextHops) > 1 {
-				linkLocalNexthop = net.ParseIP(a.MpReach.NextHops[1]).To16()
-				if linkLocalNexthop == nil {
+				linkLocalNexthop, err = netip.ParseAddr(a.MpReach.NextHops[1])
+				if err != nil || !linkLocalNexthop.Is6() {
 					return nil, fmt.Errorf("invalid nexthop: %s", a.MpReach.NextHops[1])
 				}
 			}
@@ -95,7 +94,8 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 			nexthop = ""
 		} else if len(a.MpReach.NextHops) > 0 {
 			nexthop = a.MpReach.NextHops[0]
-			if net.ParseIP(nexthop) == nil {
+			addr, err := netip.ParseAddr(nexthop)
+			if err != nil || !addr.IsValid() {
 				return nil, fmt.Errorf("invalid nexthop: %s", nexthop)
 			}
 		}
@@ -118,8 +118,8 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 		}
 		return bgp.NewPathAttributeAs4Path(params), nil
 	case *api.Attribute_As4Aggregator:
-		address := net.ParseIP(a.As4Aggregator.Address).To4()
-		if address == nil {
+		address, err := netip.ParseAddr(a.As4Aggregator.Address)
+		if err != nil || !address.Is4() {
 			return nil, fmt.Errorf("invalid as4 aggregator address: %s", a.As4Aggregator.Address)
 		}
 		return bgp.NewPathAttributeAs4Aggregator(a.As4Aggregator.Asn, a.As4Aggregator.Address), nil
@@ -132,8 +132,8 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 		var id bgp.PmsiTunnelIDInterface
 		switch typ {
 		case bgp.PMSI_TUNNEL_TYPE_INGRESS_REPL:
-			ip := net.IP(a.PmsiTunnel.Id)
-			if ip.To4() == nil && ip.To16() == nil {
+			ip, ok := netip.AddrFromSlice(a.PmsiTunnel.Id)
+			if !ok || !ip.IsValid() {
 				return nil, fmt.Errorf("invalid pmsi tunnel identifier: %s", a.PmsiTunnel.Id)
 			}
 			id = bgp.NewIngressReplTunnelID(ip.String())
@@ -542,26 +542,26 @@ func MarshalFlowSpecRules(values []bgp.FlowSpecComponentInterface) ([]*api.FlowS
 		case *bgp.FlowSpecDestinationPrefix:
 			rule.Rule = &api.FlowSpecRule_IpPrefix{IpPrefix: &api.FlowSpecIPPrefix{
 				Type:      uint32(bgp.FLOW_SPEC_TYPE_DST_PREFIX),
-				PrefixLen: uint32(v.Prefix.(*bgp.IPAddrPrefix).Length),
+				PrefixLen: uint32(v.Prefix.(*bgp.IPAddrPrefix).Prefix.Bits()),
 				Prefix:    v.Prefix.(*bgp.IPAddrPrefix).Prefix.String(),
 			}}
 		case *bgp.FlowSpecSourcePrefix:
 			rule.Rule = &api.FlowSpecRule_IpPrefix{IpPrefix: &api.FlowSpecIPPrefix{
 				Type:      uint32(bgp.FLOW_SPEC_TYPE_SRC_PREFIX),
-				PrefixLen: uint32(v.Prefix.(*bgp.IPAddrPrefix).Length),
+				PrefixLen: uint32(v.Prefix.(*bgp.IPAddrPrefix).Prefix.Bits()),
 				Prefix:    v.Prefix.(*bgp.IPAddrPrefix).Prefix.String(),
 			}}
 		case *bgp.FlowSpecDestinationPrefix6:
 			rule.Rule = &api.FlowSpecRule_IpPrefix{IpPrefix: &api.FlowSpecIPPrefix{
 				Type:      uint32(bgp.FLOW_SPEC_TYPE_DST_PREFIX),
-				PrefixLen: uint32(v.Prefix.(*bgp.IPv6AddrPrefix).Length),
+				PrefixLen: uint32(v.Prefix.(*bgp.IPv6AddrPrefix).Prefix.Bits()),
 				Prefix:    v.Prefix.(*bgp.IPv6AddrPrefix).Prefix.String(),
 				Offset:    uint32(v.Offset),
 			}}
 		case *bgp.FlowSpecSourcePrefix6:
 			rule.Rule = &api.FlowSpecRule_IpPrefix{IpPrefix: &api.FlowSpecIPPrefix{
 				Type:      uint32(bgp.FLOW_SPEC_TYPE_SRC_PREFIX),
-				PrefixLen: uint32(v.Prefix.(*bgp.IPv6AddrPrefix).Length),
+				PrefixLen: uint32(v.Prefix.(*bgp.IPv6AddrPrefix).Prefix.Bits()),
 				Prefix:    v.Prefix.(*bgp.IPv6AddrPrefix).Prefix.String(),
 				Offset:    uint32(v.Offset),
 			}}
@@ -601,7 +601,11 @@ func UnmarshalFlowSpecRules(values []*api.FlowSpecRule) ([]bgp.FlowSpecComponent
 		case *api.FlowSpecRule_IpPrefix:
 			v := r.IpPrefix
 			typ := bgp.BGPFlowSpecType(v.Type)
-			isIPv4 := net.ParseIP(v.Prefix).To4() != nil
+			ip, err := netip.ParseAddr(v.Prefix)
+			if err != nil || !ip.IsValid() {
+				return nil, fmt.Errorf("invalid ip address for %s flow spec component: %s", typ.String(), v.Prefix)
+			}
+			isIPv4 := ip.Is4()
 			switch {
 			case typ == bgp.FLOW_SPEC_TYPE_DST_PREFIX && isIPv4:
 				rule = bgp.NewFlowSpecDestinationPrefix(bgp.NewIPAddrPrefix(uint8(v.PrefixLen), v.Prefix))
@@ -832,36 +836,38 @@ func UnmarshalLsBgpPeerSegmentSid(a *api.LsBgpPeerSegmentSID) (*bgp.LsBgpPeerSeg
 }
 
 func UnmarshalLsNodeDescriptor(nd *api.LsNodeDescriptor) (*bgp.LsNodeDescriptor, error) {
+	addr, err := netip.ParseAddr(nd.BgpRouterId)
+	if err != nil {
+		return nil, fmt.Errorf("invalid BGP Router ID: %s", nd.BgpRouterId)
+	}
 	return &bgp.LsNodeDescriptor{
 		Asn:                    nd.Asn,
 		BGPLsID:                nd.BgpLsId,
 		OspfAreaID:             nd.OspfAreaId,
 		PseudoNode:             nd.Pseudonode,
 		IGPRouterID:            nd.IgpRouterId,
-		BGPRouterID:            net.ParseIP(nd.BgpRouterId),
+		BGPRouterID:            addr,
 		BGPConfederationMember: nd.BgpConfederationMember,
 	}, nil
 }
 
 func UnmarshalLsLinkDescriptor(ld *api.LsLinkDescriptor) (*bgp.LsLinkDescriptor, error) {
-	ifAddrIPv4 := net.IP{}
-	neiAddrIPv4 := net.IP{}
-	ifAddrIPv6 := net.IP{}
-	neiAddrIPv6 := net.IP{}
-
-	if ld.GetInterfaceAddrIpv4() != "" {
-		ifAddrIPv4 = net.ParseIP(ld.InterfaceAddrIpv4).To4()
+	ifAddrIPv4, err := netip.ParseAddr(ld.InterfaceAddrIpv4)
+	if err != nil {
+		return nil, fmt.Errorf("invalid InterfaceAddrIpv4: %s", ld.InterfaceAddrIpv4)
 	}
-	if ld.GetNeighborAddrIpv4() != "" {
-		neiAddrIPv4 = net.ParseIP(ld.NeighborAddrIpv4).To4()
+	neiAddrIPv4, err := netip.ParseAddr(ld.NeighborAddrIpv4)
+	if err != nil {
+		return nil, fmt.Errorf("invalid NeighborAddrIpv4: %s", ld.NeighborAddrIpv4)
 	}
-	if ld.GetInterfaceAddrIpv6() != "" {
-		ifAddrIPv6 = net.ParseIP(ld.InterfaceAddrIpv6).To16()
+	ifAddrIPv6, err := netip.ParseAddr(ld.InterfaceAddrIpv6)
+	if err != nil {
+		return nil, fmt.Errorf("invalid InterfaceAddrIpv6: %s", ld.InterfaceAddrIpv6)
 	}
-	if ld.GetNeighborAddrIpv6() != "" {
-		neiAddrIPv6 = net.ParseIP(ld.NeighborAddrIpv6).To16()
+	neiAddrIPv6, err := netip.ParseAddr(ld.NeighborAddrIpv6)
+	if err != nil {
+		return nil, fmt.Errorf("invalid NeighborAddrIpv6: %s", ld.NeighborAddrIpv6)
 	}
-
 	return &bgp.LsLinkDescriptor{
 		LinkLocalID:       &ld.LinkLocalId,
 		LinkRemoteID:      &ld.LinkRemoteId,
@@ -873,10 +879,13 @@ func UnmarshalLsLinkDescriptor(ld *api.LsLinkDescriptor) (*bgp.LsLinkDescriptor,
 }
 
 func UnmarshalPrefixDescriptor(pd *api.LsPrefixDescriptor) (*bgp.LsPrefixDescriptor, error) {
-	ipReachability := []net.IPNet{}
+	ipReachability := []netip.Prefix{}
 	for _, reach := range pd.IpReachability {
-		_, ipnet, _ := net.ParseCIDR(reach)
-		ipReachability = append(ipReachability, *ipnet)
+		prefix, err := netip.ParsePrefix(reach)
+		if err != nil {
+			return nil, fmt.Errorf("invalid IP reachability prefix: %s", reach)
+		}
+		ipReachability = append(ipReachability, prefix)
 	}
 
 	ospfRouteType := bgp.LsOspfRouteType(pd.OspfRouteType)
@@ -891,11 +900,15 @@ func UnmarshalLsPrefixDescriptor(*api.LsPrefixDescriptor) (*bgp.LsPrefixDescript
 	return nil, nil
 }
 
-func StringToNetIPLsTLVSrv6SIDInfo(s []string) ([]net.IP, uint16) {
-	sids := []net.IP{}
+func StringToNetIPLsTLVSrv6SIDInfo(s []string) ([]netip.Addr, uint16) {
+	sids := []netip.Addr{}
 	var ssiLen uint16
 	for _, sid := range s {
-		sids = append(sids, net.ParseIP(sid))
+		addr, err := netip.ParseAddr(sid)
+		if err != nil {
+			continue
+		}
+		sids = append(sids, addr)
 		ssiLen += 16
 	}
 	return sids, ssiLen
@@ -959,17 +972,6 @@ func UnmarshalLsAttribute(a *api.LsAttribute) (*bgp.LsAttribute, error) {
 
 	// For AttributeNode
 	if a.Node != nil {
-		nodeLocalRouterID := (*net.IP)(nil)
-		if a.Node.LocalRouterId != "" {
-			localRouterID := net.ParseIP(a.Node.LocalRouterId).To4()
-			nodeLocalRouterID = &localRouterID
-		}
-		nodeLocalRouterIDv6 := (*net.IP)(nil)
-		if a.Node.LocalRouterIdV6 != "" {
-			localRouterIDv6 := net.ParseIP(a.Node.LocalRouterIdV6).To16()
-			nodeLocalRouterIDv6 = &localRouterIDv6
-		}
-
 		srCapabilitiesRanges := []bgp.LsSrRange{}
 		var srCapabilities *bgp.LsSrCapabilities
 		if a.Node.SrCapabilities != nil {
@@ -1010,15 +1012,21 @@ func UnmarshalLsAttribute(a *api.LsAttribute) (*bgp.LsAttribute, error) {
 			}
 		}
 		lsAttr.Node = bgp.LsAttributeNode{
-			Flags:           flags,
-			Opaque:          &a.Node.Opaque,
-			Name:            &a.Node.Name,
-			IsisArea:        &a.Node.IsisArea,
-			LocalRouterID:   nodeLocalRouterID,
-			LocalRouterIDv6: nodeLocalRouterIDv6,
-			SrCapabilties:   srCapabilities,
-			SrAlgorithms:    &a.Node.SrAlgorithms,
-			SrLocalBlock:    lsSrLocalBlock,
+			Flags:         flags,
+			Opaque:        &a.Node.Opaque,
+			Name:          &a.Node.Name,
+			IsisArea:      &a.Node.IsisArea,
+			SrCapabilties: srCapabilities,
+			SrAlgorithms:  &a.Node.SrAlgorithms,
+			SrLocalBlock:  lsSrLocalBlock,
+		}
+		localRouterID, _ := netip.ParseAddr(a.Node.LocalRouterId)
+		localRouterIDv6, _ := netip.ParseAddr(a.Node.LocalRouterIdV6)
+		if localRouterID.IsValid() && localRouterID.Is4() {
+			lsAttr.Node.LocalRouterID = &localRouterID
+		}
+		if localRouterIDv6.IsValid() && localRouterIDv6.Is6() {
+			lsAttr.Node.LocalRouterIDv6 = &localRouterIDv6
 		}
 	}
 
@@ -1028,24 +1036,36 @@ func UnmarshalLsAttribute(a *api.LsAttribute) (*bgp.LsAttribute, error) {
 		if a.Link.Name != "" {
 			linkName = &a.Link.Name
 		}
-		linkLocalRouterID := (*net.IP)(nil)
+		linkLocalRouterID := (*netip.Addr)(nil)
 		if a.Link.LocalRouterId != "" {
-			localRouterID := net.ParseIP(a.Link.LocalRouterId)
+			localRouterID, err := netip.ParseAddr(a.Link.LocalRouterId)
+			if err != nil {
+				return nil, fmt.Errorf("invalid LocalRouterId: %s", a.Link.LocalRouterId)
+			}
 			linkLocalRouterID = &localRouterID
 		}
-		linkLocalRouterIDv6 := (*net.IP)(nil)
+		linkLocalRouterIDv6 := (*netip.Addr)(nil)
 		if a.Link.LocalRouterIdV6 != "" {
-			localRouterIDv6 := net.ParseIP(a.Link.LocalRouterIdV6)
+			localRouterIDv6, err := netip.ParseAddr(a.Link.LocalRouterIdV6)
+			if err != nil {
+				return nil, fmt.Errorf("invalid LocalRouterIdV6: %s", a.Link.LocalRouterIdV6)
+			}
 			linkLocalRouterIDv6 = &localRouterIDv6
 		}
-		linkRemoteRouterID := (*net.IP)(nil)
+		linkRemoteRouterID := (*netip.Addr)(nil)
 		if a.Link.RemoteRouterId != "" {
-			remoteRouterID := net.ParseIP(a.Link.RemoteRouterId)
+			remoteRouterID, err := netip.ParseAddr(a.Link.RemoteRouterId)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RemoteRouterId: %s", a.Link.RemoteRouterId)
+			}
 			linkRemoteRouterID = &remoteRouterID
 		}
-		linkRemoteRouterIDv6 := (*net.IP)(nil)
+		linkRemoteRouterIDv6 := (*netip.Addr)(nil)
 		if a.Link.RemoteRouterIdV6 != "" {
-			remoteRouterIDv6 := net.ParseIP(a.Link.RemoteRouterIdV6)
+			remoteRouterIDv6, err := netip.ParseAddr(a.Link.RemoteRouterIdV6)
+			if err != nil {
+				return nil, fmt.Errorf("invalid RemoteRouterIdV6: %s", a.Link.RemoteRouterIdV6)
+			}
 			linkRemoteRouterIDv6 = &remoteRouterIDv6
 		}
 		var linkAdminGroup *uint32
@@ -1142,12 +1162,12 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 	switch v := value.(type) {
 	case *bgp.IPAddrPrefix:
 		nlri.Nlri = &api.NLRI_Prefix{Prefix: &api.IPAddressPrefix{
-			PrefixLen: uint32(v.Length),
+			PrefixLen: uint32(v.Prefix.Bits()),
 			Prefix:    v.Prefix.String(),
 		}}
 	case *bgp.IPv6AddrPrefix:
 		nlri.Nlri = &api.NLRI_Prefix{Prefix: &api.IPAddressPrefix{
-			PrefixLen: uint32(v.Length),
+			PrefixLen: uint32(v.Prefix.Bits()),
 			Prefix:    v.Prefix.String(),
 		}}
 	case *bgp.LabeledIPAddrPrefix:
@@ -1256,7 +1276,7 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 				Esi:         esi,
 				EthernetTag: r.ETag,
 				IpPrefix:    r.IPPrefix.String(),
-				IpPrefixLen: uint32(r.IPPrefixLength),
+				IpPrefixLen: uint32(r.IPPrefix.Bits()),
 				Label:       r.Label,
 				GwAddress:   r.GWIPAddress.String(),
 			}}
@@ -1930,7 +1950,7 @@ func NewMpReachNLRIAttributeFromNative(a *bgp.PathAttributeMpReachNLRI) (*api.Mp
 		nexthops = nil
 	} else {
 		nexthops = []string{a.Nexthop.String()}
-		if a.LinkLocalNexthop != nil && a.LinkLocalNexthop.IsLinkLocalUnicast() {
+		if a.LinkLocalNexthop.IsValid() && a.LinkLocalNexthop.IsLinkLocalUnicast() {
 			nexthops = append(nexthops, a.LinkLocalNexthop.String())
 		}
 	}
@@ -2524,7 +2544,7 @@ func bytesOrDefault(b *[]byte) []byte {
 	return *b
 }
 
-func ipOrDefault(ip *net.IP) string {
+func ipOrDefault(ip *netip.Addr) string {
 	if ip == nil {
 		return ""
 	}

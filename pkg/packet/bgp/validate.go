@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 )
@@ -155,17 +155,17 @@ func ValidateAttribute(a PathAttributeInterface, rfs map[Family]BGPAddPathMode, 
 		}
 	case *PathAttributeNextHop:
 
-		isZero := func(ip net.IP) bool {
-			res := ip[0] & 0xff
+		isZero := func(ip netip.Addr) bool {
+			res := ip.As4()[0] & 0xff
 			return res == 0x00
 		}
 
-		isClassDorE := func(ip net.IP) bool {
-			if ip.To4() == nil {
+		isClassDorE := func(ip netip.Addr) bool {
+			if ip.Is6() {
 				// needs to verify ipv6 too?
 				return false
 			}
-			res := ip[0] & 0xe0
+			res := ip.As4()[0] & 0xe0
 			return res == 0xe0
 		}
 
@@ -307,7 +307,7 @@ func ValidateBGPMessage(m *BGPMessage) error {
 	return nil
 }
 
-func ValidateOpenMsg(m *BGPOpen, expectedAS uint32, myAS uint32, myId net.IP) (uint32, error) {
+func ValidateOpenMsg(m *BGPOpen, expectedAS uint32, myAS uint32, myId netip.Addr) (uint32, error) {
 	if m.Version != 4 {
 		return 0, NewMessageError(BGP_ERROR_OPEN_MESSAGE_ERROR, BGP_ERROR_SUB_UNSUPPORTED_VERSION_NUMBER, nil, fmt.Sprintf("unsupported version %d", m.Version))
 	}
@@ -335,7 +335,7 @@ func ValidateOpenMsg(m *BGPOpen, expectedAS uint32, myAS uint32, myId net.IP) (u
 	if routerId.IsUnspecified() {
 		return 0, NewMessageError(BGP_ERROR_OPEN_MESSAGE_ERROR, BGP_ERROR_SUB_BAD_BGP_IDENTIFIER, nil, fmt.Sprintf("bad BGP identifier %s (0.0.0.0)", routerId.String()))
 	}
-	if as == myAS && routerId.Equal(myId) {
+	if as == myAS && routerId.Compare(myId) == 0 {
 		return 0, NewMessageError(BGP_ERROR_OPEN_MESSAGE_ERROR, BGP_ERROR_SUB_BAD_BGP_IDENTIFIER, nil, fmt.Sprintf("bad BGP identifier %s", routerId.String()))
 	}
 

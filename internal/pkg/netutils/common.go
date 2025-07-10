@@ -17,16 +17,20 @@ package netutils
 
 import (
 	"net"
+	"net/netip"
 	"strings"
 	"syscall"
 )
 
-func extractFamilyFromAddress(address string) int {
-	if ip := net.ParseIP(address); ip != nil && ip.To4() == nil {
-		return syscall.AF_INET6
+func extractFamilyFromAddress(address string) (int, error) {
+	ip, err := netip.ParseAddr(address)
+	if err != nil {
+		return 0, err
 	}
-	// default
-	return syscall.AF_INET
+	if ip.Is6() {
+		return syscall.AF_INET6, nil
+	}
+	return syscall.AF_INET, nil
 }
 
 func extractFamilyFromConn(conn net.Conn) int {
@@ -37,10 +41,13 @@ func extractFamilyFromConn(conn net.Conn) int {
 	return family
 }
 
-func extractProtoFromAddress(address string) string {
-	if ip := net.ParseIP(address); ip != nil && ip.To4() == nil {
-		return "tcp6"
+func extractProtoFromAddress(address string) (string, error) {
+	family, err := extractFamilyFromAddress(address)
+	if err != nil {
+		return "", err
 	}
-	// default to tcp4
-	return "tcp4"
+	if family == syscall.AF_INET6 {
+		return "tcp6", nil
+	}
+	return "tcp4", nil
 }

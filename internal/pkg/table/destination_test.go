@@ -16,9 +16,7 @@
 package table
 
 import (
-	//"fmt"
-
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -83,7 +81,7 @@ func TestCalculate2(t *testing.T) {
 
 	// peer1 sends normal update message 10.10.0.0/24
 	update1 := bgp.NewBGPUpdateMessage(nil, pathAttributes, []*bgp.IPAddrPrefix{nlri})
-	peer1 := &PeerInfo{AS: 1, Address: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 1, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 	path1 := ProcessMessage(update1, peer1, time.Now())[0]
 
 	d := NewDestination(nlri, 0)
@@ -92,7 +90,7 @@ func TestCalculate2(t *testing.T) {
 	// suppose peer2 sends grammaatically correct but semantically flawed update message
 	// which has a withdrawal nlri not advertised before
 	update2 := bgp.NewBGPUpdateMessage([]*bgp.IPAddrPrefix{nlri}, pathAttributes, nil)
-	peer2 := &PeerInfo{AS: 2, Address: net.IP{2, 2, 2, 2}}
+	peer2 := &PeerInfo{AS: 2, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 	path2 := ProcessMessage(update2, peer2, time.Now())[0]
 	assert.Equal(t, path2.IsWithdraw, true)
 
@@ -112,7 +110,7 @@ func TestCalculate2(t *testing.T) {
 	assert.Equal(t, len(d.knownPathList), 2)
 
 	// now peer3 sends normal update message 10.10.0.0/24
-	peer3 := &PeerInfo{AS: 3, Address: net.IP{3, 3, 3, 3}}
+	peer3 := &PeerInfo{AS: 3, Address: netip.AddrFrom4([4]byte{3, 3, 3, 3})}
 	update4 := bgp.NewBGPUpdateMessage(nil, pathAttributes, []*bgp.IPAddrPrefix{nlri})
 	path4 := ProcessMessage(update4, peer3, time.Now())[0]
 
@@ -125,7 +123,7 @@ func TestCalculate2(t *testing.T) {
 func TestNeighAddrTieBreak(t *testing.T) {
 	nlri := bgp.NewIPAddrPrefix(24, "10.10.0.0")
 
-	peer0 := &PeerInfo{AS: 65001, LocalAS: 1, Address: net.IP{2, 2, 2, 2}, ID: net.IP{2, 2, 2, 2}}
+	peer0 := &PeerInfo{AS: 65001, LocalAS: 1, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2}), ID: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 
 	p0 := func() *Path {
 		aspath := bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{65001})})
@@ -133,7 +131,7 @@ func TestNeighAddrTieBreak(t *testing.T) {
 		return NewPath(peer0, nlri, false, attrs, time.Now(), false)
 	}()
 
-	peer1 := &PeerInfo{AS: 65001, LocalAS: 1, Address: net.IP{3, 3, 3, 3}, ID: net.IP{2, 2, 2, 2}} // same ID as peer0, separate eBGP session
+	peer1 := &PeerInfo{AS: 65001, LocalAS: 1, Address: netip.AddrFrom4([4]byte{3, 3, 3, 3}), ID: netip.AddrFrom4([4]byte{2, 2, 2, 2})} // same ID as peer0, separate eBGP session
 
 	p1 := func() *Path {
 		aspath := bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{65001})})
@@ -209,18 +207,18 @@ func TestTimeTieBreaker(t *testing.T) {
 	pathAttributes := []bgp.PathAttributeInterface{origin, aspath, nexthop, med}
 	nlri := bgp.NewIPAddrPrefix(24, "10.10.0.0")
 	updateMsg := bgp.NewBGPUpdateMessage(nil, pathAttributes, []*bgp.IPAddrPrefix{nlri})
-	peer1 := &PeerInfo{AS: 2, LocalAS: 1, Address: net.IP{1, 1, 1, 1}, ID: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 2, LocalAS: 1, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1}), ID: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 	path1 := ProcessMessage(updateMsg, peer1, time.Now())[0]
 
-	peer2 := &PeerInfo{AS: 2, LocalAS: 1, Address: net.IP{2, 2, 2, 2}, ID: net.IP{2, 2, 2, 2}} // weaker router-id
-	path2 := ProcessMessage(updateMsg, peer2, time.Now().Add(-1*time.Hour))[0]                 // older than path1
+	peer2 := &PeerInfo{AS: 2, LocalAS: 1, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2}), ID: netip.AddrFrom4([4]byte{2, 2, 2, 2})} // weaker router-id
+	path2 := ProcessMessage(updateMsg, peer2, time.Now().Add(-1*time.Hour))[0]                                                     // older than path1
 
 	d := NewDestination(nlri, 0)
 	d.Calculate(logger, path1)
 	d.Calculate(logger, path2)
 
 	assert.Equal(t, len(d.knownPathList), 2)
-	assert.Equal(t, true, d.GetBestPath("", 0).GetSource().ID.Equal(net.IP{2, 2, 2, 2})) // path from peer2 win
+	assert.Equal(t, true, d.GetBestPath("", 0).GetSource().ID.Compare(netip.AddrFrom4([4]byte{2, 2, 2, 2})) == 0) // path from peer2 win
 
 	// this option disables tie breaking by age
 	SelectionOptions.ExternalCompareRouterId = true
@@ -229,7 +227,7 @@ func TestTimeTieBreaker(t *testing.T) {
 	d.Calculate(logger, path2)
 
 	assert.Equal(t, len(d.knownPathList), 2)
-	assert.Equal(t, true, d.GetBestPath("", 0).GetSource().ID.Equal(net.IP{1, 1, 1, 1})) // path from peer1 win
+	assert.Equal(t, true, d.GetBestPath("", 0).GetSource().ID.Compare(netip.AddrFrom4([4]byte{1, 1, 1, 1})) == 0) // path from peer1 win
 }
 
 func DestCreatePeer() []*PeerInfo {
@@ -334,9 +332,9 @@ func TestMultipath(t *testing.T) {
 
 	nlri := []*bgp.IPAddrPrefix{bgp.NewIPAddrPrefix(24, "10.10.10.0")}
 	updateMsg := bgp.NewBGPUpdateMessage(nil, pathAttributes, nlri)
-	peer1 := &PeerInfo{AS: 1, Address: net.IP{1, 1, 1, 1}, ID: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 1, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1}), ID: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 	path1 := ProcessMessage(updateMsg, peer1, time.Now())[0]
-	peer2 := &PeerInfo{AS: 2, Address: net.IP{2, 2, 2, 2}, ID: net.IP{2, 2, 2, 2}}
+	peer2 := &PeerInfo{AS: 2, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2}), ID: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 
 	med = bgp.NewPathAttributeMultiExitDisc(100)
 	nexthop = bgp.NewPathAttributeNextHop("192.168.150.2")
@@ -366,7 +364,7 @@ func TestMultipath(t *testing.T) {
 	assert.Equal(t, len(multi), 1)
 	assert.Equal(t, len(d.GetKnownPathList(GLOBAL_RIB_NAME, 0)), 1)
 
-	peer3 := &PeerInfo{AS: 3, Address: net.IP{3, 3, 3, 3}, ID: net.IP{3, 3, 3, 3}}
+	peer3 := &PeerInfo{AS: 3, Address: netip.AddrFrom4([4]byte{3, 3, 3, 3}), ID: netip.AddrFrom4([4]byte{3, 3, 3, 3})}
 	med = bgp.NewPathAttributeMultiExitDisc(50)
 	nexthop = bgp.NewPathAttributeNextHop("192.168.150.3")
 	pathAttributes = []bgp.PathAttributeInterface{
@@ -444,8 +442,8 @@ func TestDestination_Calculate_ExplicitWithdraw(t *testing.T) {
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
 
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
-	peer2 := &PeerInfo{AS: 65002, Address: net.IP{2, 2, 2, 2}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
+	peer2 := &PeerInfo{AS: 65002, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 
 	// Create initial paths
 	p1 := NewPath(peer1, nlri, false, attrs, time.Now(), false)
@@ -468,7 +466,7 @@ func TestDestination_Calculate_ImplicitWithdraw(t *testing.T) {
 	}
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 
 	// Create initial path
 	p1 := NewPath(peer1, nlri, false, attrs, time.Now(), false)
@@ -493,7 +491,7 @@ func TestDestination_GetBestPath_InvalidNexthop(t *testing.T) {
 	}
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 
 	p1 := NewPath(peer1, nlri, false, attrs, time.Now(), false)
 
@@ -514,8 +512,8 @@ func TestDestination_Select_BestAndMultiPath(t *testing.T) {
 	}
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
-	peer2 := &PeerInfo{AS: 65002, Address: net.IP{2, 2, 2, 2}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
+	peer2 := &PeerInfo{AS: 65002, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 
 	p1 := NewPath(peer1, nlri, false, attrs, time.Now(), false)
 	p2 := NewPath(peer2, nlri, false, attrs, time.Now(), false)
@@ -539,8 +537,8 @@ func TestCompareByLLGRStaleCommunity(t *testing.T) {
 	}
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
-	peer2 := &PeerInfo{AS: 65002, Address: net.IP{2, 2, 2, 2}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
+	peer2 := &PeerInfo{AS: 65002, Address: netip.AddrFrom4([4]byte{2, 2, 2, 2})}
 
 	p1 := NewPath(peer1, nlri, false, attrs, time.Now(), false)
 	p2 := NewPath(peer2, nlri, false, attrs, time.Now(), false)
@@ -565,7 +563,7 @@ func TestCompareByLocalOrigin(t *testing.T) {
 	}
 
 	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
-	peer1 := &PeerInfo{AS: 65001, Address: net.IP{1, 1, 1, 1}}
+	peer1 := &PeerInfo{AS: 65001, Address: netip.AddrFrom4([4]byte{1, 1, 1, 1})}
 
 	// Local path (peer = nil)
 	localPath := NewPath(nil, nlri, false, attrs, time.Now(), false)

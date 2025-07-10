@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"net"
+	"net/netip"
 )
 
 const (
@@ -208,14 +208,13 @@ func NewRTRCacheResponse(id uint16) *RTRCacheResponse {
 }
 
 type RTRIPPrefix struct {
-	Version   uint8
-	Type      uint8
-	Len       uint32
-	Flags     uint8
-	PrefixLen uint8
-	MaxLen    uint8
-	Prefix    net.IP
-	AS        uint32
+	Version uint8
+	Type    uint8
+	Len     uint32
+	Flags   uint8
+	MaxLen  uint8
+	Prefix  netip.Prefix
+	AS      uint32
 }
 
 func (m *RTRIPPrefix) DecodeFromBytes(data []byte) error {
@@ -226,16 +225,24 @@ func (m *RTRIPPrefix) DecodeFromBytes(data []byte) error {
 	m.Type = data[1]
 	m.Len = binary.BigEndian.Uint32(data[4:8])
 	m.Flags = data[8]
-	m.PrefixLen = data[9]
+	prefixLen := int(data[9])
 	m.MaxLen = data[10]
 	if m.Type == RTR_IPV4_PREFIX {
-		m.Prefix = net.IP(data[12:16]).To4()
+		addr, ok := netip.AddrFromSlice(data[12:16])
+		if !ok {
+			return fmt.Errorf("invalid IPv4 prefix: %v", data[12:16])
+		}
+		m.Prefix = netip.PrefixFrom(addr, prefixLen)
 		m.AS = binary.BigEndian.Uint32(data[16:20])
 	} else {
 		if len(data) < RTR_IPV6_PREFIX_LEN {
 			return errors.New("data too short for RTRIPPrefix")
 		}
-		m.Prefix = net.IP(data[12:28]).To16()
+		addr, ok := netip.AddrFromSlice(data[12:28])
+		if !ok {
+			return fmt.Errorf("invalid IPv6 prefix: %v", data[12:28])
+		}
+		m.Prefix = netip.PrefixFrom(addr, prefixLen)
 		m.AS = binary.BigEndian.Uint32(data[28:32])
 	}
 	return nil
@@ -247,22 +254,24 @@ func (m *RTRIPPrefix) Serialize() ([]byte, error) {
 	data[1] = m.Type
 	binary.BigEndian.PutUint32(data[4:8], m.Len)
 	data[8] = m.Flags
-	data[9] = m.PrefixLen
+	data[9] = uint8(m.Prefix.Bits())
 	data[10] = m.MaxLen
 	if m.Type == RTR_IPV4_PREFIX {
-		copy(data[12:16], m.Prefix.To4())
+		addr := m.Prefix.Addr().As4()
+		copy(data[12:16], addr[:])
 		binary.BigEndian.PutUint32(data[16:20], m.AS)
 	} else {
-		copy(data[12:28], m.Prefix.To16())
+		addr := m.Prefix.Addr().As16()
+		copy(data[12:28], addr[:])
 		binary.BigEndian.PutUint32(data[28:32], m.AS)
 	}
 	return data, nil
 }
 
-func NewRTRIPPrefix(prefix net.IP, prefixLen, maxLen uint8, as uint32, flags uint8) *RTRIPPrefix {
+func NewRTRIPPrefix(prefix netip.Prefix, maxLen uint8, as uint32, flags uint8) *RTRIPPrefix {
 	var pduType uint8
 	var pduLen uint32
-	if prefix.To4() != nil && prefixLen <= 32 {
+	if prefix.Addr().Is4() {
 		pduType = RTR_IPV4_PREFIX
 		pduLen = RTR_IPV4_PREFIX_LEN
 	} else {
@@ -271,13 +280,12 @@ func NewRTRIPPrefix(prefix net.IP, prefixLen, maxLen uint8, as uint32, flags uin
 	}
 
 	return &RTRIPPrefix{
-		Type:      pduType,
-		Len:       pduLen,
-		Flags:     flags,
-		PrefixLen: prefixLen,
-		MaxLen:    maxLen,
-		Prefix:    prefix,
-		AS:        as,
+		Type:   pduType,
+		Len:    pduLen,
+		Flags:  flags,
+		MaxLen: maxLen,
+		Prefix: prefix,
+		AS:     as,
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -979,14 +980,12 @@ func addressByteLength(family uint8) (int, error) {
 	return 0, fmt.Errorf("unknown address family: %d", family)
 }
 
-func ipFromFamily(family uint8, buf []byte) net.IP {
-	switch family {
-	case syscall.AF_INET:
-		return net.IP(buf).To4()
-	case syscall.AF_INET6:
-		return net.IP(buf).To16()
+func ipFromFamily(family uint8, buf []byte) netip.Addr {
+	addr, ok := netip.AddrFromSlice(buf)
+	if !ok {
+		return netip.Addr{}
 	}
-	return nil
+	return addr
 }
 
 // MESSAGE_FLAG is 32bit in frr7.5 and after frr7.5, 8bit in frr 7.4 and before frr7.4
@@ -1934,7 +1933,7 @@ type linkParam struct {
 	bwClassNum  uint32
 	adminGroup  uint32
 	remoteAS    uint32
-	remoteIP    net.IP
+	remoteIP    netip.Addr
 	aveDelay    uint32
 	minDelay    uint32
 	maxDelay    uint32
@@ -2047,7 +2046,11 @@ func (b *interfaceUpdateBody) decodeFromBytes(data []byte, version uint8, softwa
 			}
 			b.linkParam.adminGroup = binary.BigEndian.Uint32(data[:4])
 			b.linkParam.remoteAS = binary.BigEndian.Uint32(data[4:8])
-			b.linkParam.remoteIP = data[8:12]
+			remoteip, ok := netip.AddrFromSlice(data[8:12])
+			if !ok {
+				return fmt.Errorf("interfaceUpdateBody: invalid remote IP address: %v", data[8:12])
+			}
+			b.linkParam.remoteIP = remoteip
 			b.linkParam.aveDelay = binary.BigEndian.Uint32(data[12:16])
 			b.linkParam.minDelay = binary.BigEndian.Uint32(data[16:20])
 			b.linkParam.maxDelay = binary.BigEndian.Uint32(data[20:24])
@@ -2078,9 +2081,8 @@ func (b *interfaceUpdateBody) string(version uint8, software Software) string {
 type interfaceAddressUpdateBody struct {
 	index       uint32
 	flags       interfaceAddressFlag
-	prefix      net.IP
-	length      uint8
-	destination net.IP
+	prefix      netip.Prefix
+	destination netip.Addr
 }
 
 // Ref: zebra_interface_address_read in lib/zclient.c of Quagga1.2&FRR3&FRR4&FRR5&FRR6&FRR7.x&FRR8 (ZAPI3&4&5&6)
@@ -2098,9 +2100,17 @@ func (b *interfaceAddressUpdateBody) decodeFromBytes(data []byte, version uint8,
 	if len(data) < 7+addrlen*2 {
 		return errors.New("not enough data for interface address update")
 	}
-	b.prefix = data[6 : 6+addrlen]                // zclient_stream_get_prefix //STREAM_GET(&p->u.prefix, s, plen);
-	b.length = data[6+addrlen]                    // zclient_stream_get_prefix //STREAM_GETC(s, c);
-	b.destination = data[7+addrlen : 7+addrlen*2] // STREAM_GET(&d.u.prefix, s, plen)
+	var ok bool
+	addr, ok := netip.AddrFromSlice(data[6 : 6+addrlen]) // zclient_stream_get_prefix //STREAM_GET(&p->u.prefix, s, plen);
+	if !ok {
+		return fmt.Errorf("invalid prefix: %v", err)
+	}
+	length := data[6+addrlen] // zclient_stream_get_prefix //STREAM_GETC(s, c);
+	b.prefix = netip.PrefixFrom(addr, int(length))
+	b.destination, ok = netip.AddrFromSlice(data[7+addrlen : 7+addrlen*2]) // STREAM_GET(&d.u.prefix, s, plen)
+	if !ok {
+		return fmt.Errorf("invalid destination address: %v", data[7+addrlen:7+addrlen*2])
+	}
 	return nil
 }
 
@@ -2110,13 +2120,12 @@ func (b *interfaceAddressUpdateBody) serialize(version uint8, software Software)
 
 func (b *interfaceAddressUpdateBody) string(version uint8, software Software) string {
 	return fmt.Sprintf(
-		"idx: %d, flags: %s, addr: %s/%d",
-		b.index, b.flags.String(), b.prefix.String(), b.length)
+		"idx: %d, flags: %s, addr: %s",
+		b.index, b.flags.String(), b.prefix.String())
 }
 
 type routerIDUpdateBody struct {
-	length uint8
-	prefix net.IP
+	prefix netip.Prefix
 	afi    afi
 }
 
@@ -2134,8 +2143,13 @@ func (b *routerIDUpdateBody) decodeFromBytes(data []byte, version uint8, softwar
 	if len(data) < 1+addrlen+1 {
 		return errors.New("not enough data for router ID update")
 	}
-	b.prefix = data[1 : 1+addrlen] // zclient_stream_get_prefix
-	b.length = data[1+addrlen]     // zclient_stream_get_prefix
+	var ok bool
+	addr, ok := netip.AddrFromSlice(data[1 : 1+addrlen]) // zclient_stream_get_prefix
+	if !ok {
+		return fmt.Errorf("invalid prefix: %v", err)
+	}
+	length := data[1+addrlen]
+	b.prefix = netip.PrefixFrom(addr, int(length))
 	return nil
 }
 
@@ -2148,7 +2162,7 @@ func (b *routerIDUpdateBody) serialize(version uint8, software Software) ([]byte
 }
 
 func (b *routerIDUpdateBody) string(version uint8, software Software) string {
-	return fmt.Sprintf("id: %s/%d", b.prefix.String(), b.length)
+	return fmt.Sprintf("id: %s", b.prefix.String())
 }
 
 // zapiNexthopFlag is defined in lib/zclient.h of FRR
@@ -2193,15 +2207,15 @@ func nexthopProcessFlagForIPRouteBody(version uint8, software Software, isDecode
 
 // Ref: struct seg6local_context in lib/srv6.h of FRR8.1
 type seg6localContext struct {
-	nh4   net.IP // struct in_addr nh4
-	nh6   net.IP // struct in_addr nh6
+	nh4   netip.Addr // struct in_addr nh4
+	nh6   netip.Addr // struct in_addr nh6
 	table uint32
 }
 
 func (s6lc seg6localContext) encode() []byte {
 	var buf []byte
-	buf = append(buf, s6lc.nh4.To4()...)
-	buf = append(buf, s6lc.nh6.To16()...)
+	buf = append(buf, s6lc.nh4.AsSlice()...)
+	buf = append(buf, s6lc.nh6.AsSlice()...)
 	tmpbuf := make([]byte, 4)
 	binary.BigEndian.PutUint32(tmpbuf, s6lc.table)
 	buf = append(buf, tmpbuf...)
@@ -2210,9 +2224,9 @@ func (s6lc seg6localContext) encode() []byte {
 
 func (s6lc *seg6localContext) decode(data []byte) int {
 	offset := 0
-	s6lc.nh4 = net.IP(data[offset : offset+4]).To4()
+	s6lc.nh4, _ = netip.AddrFromSlice(data[offset : offset+4])
 	offset += 4
-	s6lc.nh6 = net.IP(data[offset : offset+16]).To16()
+	s6lc.nh6, _ = netip.AddrFromSlice(data[offset : offset+16])
 	offset += 16
 	s6lc.table = binary.BigEndian.Uint32(data[offset : offset+4])
 	offset += 4
@@ -2226,7 +2240,7 @@ type Nexthop struct {
 	VrfID           uint32           // FRR5, FRR6, FRR7.x, FRR8, FRR8.1
 	Ifindex         uint32           // Ifindex is referred in zclient_test
 	flags           uint8            // FRR7.1, FRR7.2 FRR7.3, FRR7.4, FRR7.5, FRR8, FRR8.1
-	Gate            net.IP           // union { union g_addr gate;
+	Gate            netip.Addr       // union { union g_addr gate;
 	blackholeType   uint8            //        enum blackhole_type bh_type;}
 	LabelNum        uint8            // FRR5, FRR6, FRR7.x, FRR8, FRR8.1
 	MplsLabels      []uint32         // FRR5, FRR6, FRR7.x, FRR8, FRR8.1
@@ -2237,7 +2251,7 @@ type Nexthop struct {
 	srteColor       uint32           // FRR7.5, FRR8, FRR8.1
 	seg6localAction uint32           // FRR8.1
 	seg6localCtx    seg6localContext // FRR8.1
-	seg6Segs        net.IP           // strcut in6_addr // FRR8.1
+	seg6Segs        netip.Addr       // strcut in6_addr // FRR8.1
 }
 
 func (n Nexthop) string() string {
@@ -2256,12 +2270,12 @@ func (n Nexthop) string() string {
 }
 
 func (n Nexthop) gateToType(version uint8) nexthopType {
-	if n.Gate.To4() != nil {
+	if n.Gate.Is4() {
 		if version > 4 && n.Ifindex > 0 {
 			return nexthopTypeIPv4IFIndex
 		}
 		return nexthopTypeIPv4.toEach(version)
-	} else if n.Gate.To16() != nil {
+	} else if n.Gate.Is6() {
 		if version > 4 && n.Ifindex > 0 {
 			return nexthopTypeIPv6IFIndex
 		}
@@ -2314,11 +2328,11 @@ func (n Nexthop) encode(version uint8, software Software, processFlag nexthopPro
 	if nhType == nexthopTypeIPv4.toEach(version) ||
 		nhType == nexthopTypeIPv4IFIndex.toEach(version) {
 		// frr: stream_put_in_addr(s, &api_nh->gate.ipv4);
-		buf = append(buf, n.Gate.To4()...)
+		buf = append(buf, n.Gate.AsSlice()...)
 	} else if nhType == nexthopTypeIPv6.toEach(version) ||
 		nhType == nexthopTypeIPv6IFIndex.toEach(version) {
 		// frr: stream_write(s, (uint8_t *)&api_nh->gate.ipv6, 16);
-		buf = append(buf, n.Gate.To16()...)
+		buf = append(buf, n.Gate.AsSlice()...)
 	}
 	if nhType == nexthopTypeIFIndex ||
 		nhType == nexthopTypeIPv4IFIndex.toEach(version) ||
@@ -2381,7 +2395,7 @@ func (n Nexthop) encode(version uint8, software Software, processFlag nexthopPro
 	// added in frr8.1
 	if n.flags&zapiNexthopFlagSeg6Local > 0 {
 		// frr: stream_write(s, &api_nh->seg6_segs, sizeof(struct in6_addr));
-		buf = append(buf, n.seg6Segs.To16()...)
+		buf = append(buf, n.seg6Segs.AsSlice()...)
 	}
 	return buf
 }
@@ -2425,9 +2439,9 @@ func (n *Nexthop) decode(data []byte, version uint8, software Software, family u
 	}
 	switch family {
 	case syscall.AF_INET:
-		n.Gate = net.ParseIP("0.0.0.0")
+		n.Gate = netip.MustParseAddr("0.0.0.0")
 	case syscall.AF_INET6:
-		n.Gate = net.ParseIP("::")
+		n.Gate = netip.MustParseAddr("::")
 	}
 	if nhType == nexthopTypeIPv4.toEach(version) ||
 		nhType == nexthopTypeIPv4IFIndex.toEach(version) {
@@ -2435,7 +2449,7 @@ func (n *Nexthop) decode(data []byte, version uint8, software Software, family u
 			return 0, fmt.Errorf("lack of bytes for IPv4 gate. need 4 but %d", len(data)-offset)
 		}
 		// frr: STREAM_GET(&api_nh->gate.ipv4.s_addr, s, IPV4_MAX_BYTELEN);
-		n.Gate = net.IP(data[offset : offset+4]).To4()
+		n.Gate, _ = netip.AddrFromSlice(data[offset : offset+4])
 		offset += 4
 	} else if nhType == nexthopTypeIPv6.toEach(version) ||
 		nhType == nexthopTypeIPv6IFIndex.toEach(version) {
@@ -2443,7 +2457,7 @@ func (n *Nexthop) decode(data []byte, version uint8, software Software, family u
 			return 0, fmt.Errorf("lack of bytes for IPv6 gate. need 16 but %d", len(data)-offset)
 		}
 		// frr: STREAM_GET(&api_nh->gate.ipv6, s, 16);
-		n.Gate = net.IP(data[offset : offset+16]).To16()
+		n.Gate, _ = netip.AddrFromSlice(data[offset : offset+16])
 		offset += 16
 	}
 	if nhType == nexthopTypeIFIndex ||
@@ -2547,7 +2561,7 @@ func (n *Nexthop) decode(data []byte, version uint8, software Software, family u
 		if len(data) < offset+16 {
 			return 0, fmt.Errorf("lack of bytes for Nexthop Seg6Local. need 16 but %d", len(data)-offset)
 		}
-		n.seg6Segs = net.IP(data[offset : offset+16]).To16()
+		n.seg6Segs, _ = netip.AddrFromSlice(data[offset : offset+16])
 		offset += 16
 	}
 	return offset, nil
@@ -2572,15 +2586,14 @@ func decodeNexthops(nexthops *[]Nexthop, data []byte, version uint8, software So
 
 // Prefix referred in zclient is struct for network prefix and relate information
 type Prefix struct {
-	Family    uint8
-	PrefixLen uint8
-	Prefix    net.IP
+	Family uint8
+	Prefix netip.Prefix
 }
 
-func familyFromPrefix(prefix net.IP) uint8 {
-	if prefix.To4() != nil {
+func familyFromPrefix(prefix netip.Prefix) uint8 {
+	if prefix.Addr().Is4() {
 		return syscall.AF_INET
-	} else if prefix.To16() != nil {
+	} else if prefix.Addr().Is6() {
 		return syscall.AF_INET6
 	}
 	return syscall.AF_UNSPEC
@@ -2749,17 +2762,17 @@ func (b *IPRouteBody) serialize(version uint8, software Software) ([]byte, error
 		// frr: stream_putc(s, api->prefix.family);
 		buf = append(buf, b.Prefix.Family)
 	}
-	byteLen := (int(b.Prefix.PrefixLen) + 7) / 8
-	buf = append(buf, b.Prefix.PrefixLen) // frr: stream_putc(s, api->prefix.prefixlen);
+	byteLen := (int(b.Prefix.Prefix.Bits()) + 7) / 8
+	buf = append(buf, byte(b.Prefix.Prefix.Bits())) // frr: stream_putc(s, api->prefix.prefixlen);
 	// frr: stream_write(s, (uint8_t *)&api->prefix.u.prefix, psize);
-	buf = append(buf, b.Prefix.Prefix[:byteLen]...)
+	buf = append(buf, b.Prefix.Prefix.Addr().AsSlice()[:byteLen]...)
 
 	if version > 3 && b.Message&messageSRCPFX.ToEach(version, software) > 0 {
-		byteLen = (int(b.srcPrefix.PrefixLen) + 7) / 8
+		byteLen = (int(b.srcPrefix.Prefix.Bits()) + 7) / 8
 		// frr: stream_putc(s, api->src_prefix.prefixlen);
-		buf = append(buf, b.srcPrefix.PrefixLen)
+		buf = append(buf, byte(b.srcPrefix.Prefix.Bits()))
 		// frr: stream_write(s, (uint8_t *)&api->prefix.u.prefix, psize);
-		buf = append(buf, b.srcPrefix.Prefix[:byteLen]...)
+		buf = append(buf, b.srcPrefix.Prefix.Addr().AsSlice()[:byteLen]...)
 	}
 
 	// NHG(Nexthop Group) is added in frr8
@@ -2960,22 +2973,23 @@ func (b *IPRouteBody) decodeFromBytes(data []byte, version uint8, software Softw
 	if len(data) < 1 {
 		return errors.New("IPRouteBody data length is too short")
 	}
-	b.Prefix.PrefixLen = data[0] // frr: STREAM_GETC(s, api->prefix.prefixlen);
-	if b.Prefix.PrefixLen > addrBitLen {
-		return fmt.Errorf("prefix length %d is greater than %d", b.Prefix.PrefixLen, addrBitLen)
+	prefixLen := data[0] // frr: STREAM_GETC(s, api->prefix.prefixlen);
+	if prefixLen > addrBitLen {
+		return fmt.Errorf("prefix length %d is greater than %d", prefixLen, addrBitLen)
 	}
 	data = data[1:]
 	pos := 0
 	rest := len(data)
 
 	buf := make([]byte, addrByteLen)
-	byteLen := (int(b.Prefix.PrefixLen) + 7) / 8
+	byteLen := (int(prefixLen) + 7) / 8
 	if pos+byteLen > rest || len(buf) < byteLen {
 		return fmt.Errorf("message length invalid pos:%d rest:%d buflen:%d", pos, rest, len(buf))
 	}
 	// frr: STREAM_GET(&api->prefix.u.prefix, s, PSIZE(api->prefix.prefixlen));
 	copy(buf, data[pos:pos+byteLen])
-	b.Prefix.Prefix = ipFromFamily(b.Prefix.Family, buf)
+	addr := ipFromFamily(b.Prefix.Family, buf)
+	b.Prefix.Prefix = netip.PrefixFrom(addr, int(prefixLen))
 	pos += byteLen
 
 	if version > 3 && b.Message&messageSRCPFX.ToEach(version, software) > 0 {
@@ -2983,19 +2997,20 @@ func (b *IPRouteBody) decodeFromBytes(data []byte, version uint8, software Softw
 			return fmt.Errorf("MessageSRCPFX message length invalid pos:%d rest:%d", pos, rest)
 		}
 		// frr: STREAM_GETC(s, api->src_prefix.prefixlen);
-		b.srcPrefix.PrefixLen = data[pos]
-		if b.srcPrefix.PrefixLen > addrBitLen {
+		prefixLen = data[pos]
+		if prefixLen > addrBitLen {
 			return fmt.Errorf("prefix length is greater than %d", addrByteLen*8)
 		}
 		pos++
 		buf = make([]byte, addrByteLen)
-		byteLen = (int(b.srcPrefix.PrefixLen) + 7) / 8
+		byteLen = (int(prefixLen) + 7) / 8
 		if pos+byteLen > rest || len(buf) < byteLen {
 			return fmt.Errorf("message length invalid pos:%d rest:%d buflen:%d", pos, rest, len(buf))
 		}
 		// frr: STREAM_GET(&api->src_prefix.prefix, s, PSIZE(api->src_prefix.prefixlen));
 		copy(buf, data[pos:pos+byteLen])
-		b.srcPrefix.Prefix = ipFromFamily(b.Prefix.Family, buf)
+		addr = ipFromFamily(b.Prefix.Family, buf)
+		b.srcPrefix.Prefix = netip.PrefixFrom(addr, int(prefixLen))
 		pos += byteLen
 	}
 
@@ -3123,10 +3138,10 @@ func (b *IPRouteBody) decodeFromBytes(data []byte, version uint8, software Softw
 
 func (b *IPRouteBody) string(version uint8, software Software) string {
 	s := fmt.Sprintf(
-		"type: %s, instance: %d, flags: %s, message: %d(%s), safi: %s, prefix: %s/%d, src_prefix: %s/%d",
+		"type: %s, instance: %d, flags: %s, message: %d(%s), safi: %s, prefix: %s, src_prefix: %s",
 		b.Type.String(), b.instance, b.Flags.String(version, software), b.Message,
-		b.Message.string(version, software), b.Safi.String(), b.Prefix.Prefix.String(), b.Prefix.PrefixLen,
-		b.srcPrefix.Prefix.String(), b.srcPrefix.PrefixLen)
+		b.Message.string(version, software), b.Safi.String(), b.Prefix.Prefix.String(),
+		b.srcPrefix.Prefix.String())
 	for i, nh := range b.Nexthops {
 		s += fmt.Sprintf(", nexthops[%d]: %s", i, nh.string())
 	}
@@ -3138,9 +3153,9 @@ func (b *IPRouteBody) string(version uint8, software Software) string {
 // lookupBody is combination of nexthopLookupBody and imporetLookupBody
 type lookupBody struct {
 	api          APIType
-	prefixLength uint8  // importLookup serialize only
-	addr         net.IP // it is same as prefix (it is deleted from importLookup)
-	distance     uint8  // nexthopIPv4LookupMRIB only
+	prefixLength uint8      // importLookup serialize only
+	addr         netip.Addr // it is same as prefix (it is deleted from importLookup)
+	distance     uint8      // nexthopIPv4LookupMRIB only
 	metric       uint32
 	nexthops     []Nexthop
 }
@@ -3153,9 +3168,9 @@ func (b *lookupBody) serialize(version uint8, software Software) ([]byte, error)
 	}
 	switch b.api {
 	case ipv4NexthopLookupMRIB, zapi3IPv4NexthopLookup, zapi3IPv4ImportLookup:
-		buf = append(buf, b.addr.To4()...)
+		buf = append(buf, b.addr.AsSlice()...)
 	case zapi3IPv6NexthopLookup:
-		buf = append(buf, b.addr.To16()...)
+		buf = append(buf, b.addr.AsSlice()...)
 	}
 	return buf, nil
 }
@@ -3220,7 +3235,7 @@ type RegisteredNexthop struct {
 	// Note: Ignores PrefixLength (uint8), because this field should be always:
 	// - 32 if Address Family is AF_INET
 	// - 128 if Address Family is AF_INET6
-	Prefix net.IP
+	Prefix netip.Addr
 }
 
 func (n *RegisteredNexthop) len() int {
@@ -3262,9 +3277,9 @@ func (n *RegisteredNexthop) serialize(version uint8, software Software) ([]byte,
 	// Prefix (variable)
 	switch n.Family {
 	case uint16(syscall.AF_INET):
-		buf = append(buf, n.Prefix.To4()...) // stream_put_in_addr(s, &p->u.prefix4);
+		buf = append(buf, n.Prefix.AsSlice()...) // stream_put_in_addr(s, &p->u.prefix4);
 	case uint16(syscall.AF_INET6):
-		buf = append(buf, n.Prefix.To16()...) // stream_put(s, &(p->u.prefix6), 16);
+		buf = append(buf, n.Prefix.AsSlice()...) // stream_put(s, &(p->u.prefix6), 16);
 	default:
 		return nil, fmt.Errorf("invalid address family: %d", n.Family)
 	}
@@ -3396,9 +3411,9 @@ func (b *NexthopUpdateBody) serialize(version uint8, software Software) ([]byte,
 	// Prefix Length (1 byte) + Prefix (variable)
 	switch b.Prefix.Family {
 	case syscall.AF_INET:
-		buf = append(buf, b.Prefix.Prefix.To4()...)
+		buf = append(buf, b.Prefix.Prefix.Addr().AsSlice()...)
 	case syscall.AF_INET6:
-		buf = append(buf, b.Prefix.Prefix.To16()...)
+		buf = append(buf, b.Prefix.Prefix.Addr().AsSlice()...)
 	default:
 		return nil, fmt.Errorf("invalid address family: %d", b.Prefix.Family)
 	}
@@ -3447,7 +3462,7 @@ func (b *NexthopUpdateBody) decodeFromBytes(data []byte, version uint8, software
 			b.Safi = Safi(binary.BigEndian.Uint16(data[:2]))
 			var match Prefix
 			match.Family = uint8(binary.BigEndian.Uint16(data[2:4])) // STREAM_GETC(s, match->prefixlen);
-			match.PrefixLen = data[4]                                // STREAM_GETC(s, match->prefixlen);
+			prefixLen := data[4]                                     // STREAM_GETC(s, match->prefixlen);
 			addrByteLen, err := addressByteLength(match.Family)
 			if err != nil {
 				return err
@@ -3455,7 +3470,8 @@ func (b *NexthopUpdateBody) decodeFromBytes(data []byte, version uint8, software
 			if len(data) < 5+addrByteLen {
 				return errors.New("invalid message length: missing match prefix")
 			}
-			match.Prefix = ipFromFamily(b.Prefix.Family, data[5:5+addrByteLen])
+			addr := ipFromFamily(b.Prefix.Family, data[5:5+addrByteLen])
+			match.Prefix = netip.PrefixFrom(addr, int(prefixLen))
 			data = data[5+addrByteLen:]
 		}
 	}
@@ -3465,7 +3481,7 @@ func (b *NexthopUpdateBody) decodeFromBytes(data []byte, version uint8, software
 	// Address Family (2 bytes) and Prefix Length (1 byte)
 	prefixFamily := binary.BigEndian.Uint16(data[:2])
 	b.Prefix.Family = uint8(prefixFamily)
-	b.Prefix.PrefixLen = data[2]
+	prefixLen := data[2]
 	offset := 3
 
 	addrByteLen, err := addressByteLength(b.Prefix.Family)
@@ -3476,7 +3492,8 @@ func (b *NexthopUpdateBody) decodeFromBytes(data []byte, version uint8, software
 	if len(data) < offset+addrByteLen {
 		return errors.New("invalid message length: missing prefix")
 	}
-	b.Prefix.Prefix = ipFromFamily(b.Prefix.Family, data[offset:offset+addrByteLen])
+	addr := ipFromFamily(b.Prefix.Family, data[offset:offset+addrByteLen])
+	b.Prefix.Prefix = netip.PrefixFrom(addr, int(prefixLen))
 	offset += addrByteLen
 
 	if b.Message&messageSRTE > 0 { // since frr 7.5

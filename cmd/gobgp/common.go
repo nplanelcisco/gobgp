@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -109,15 +110,15 @@ var neighborsOpts struct {
 }
 
 var mrtOpts struct {
-	Filename    string `long:"filename" description:"MRT file name"`
-	RecordCount int64  `long:"count" description:"Number of records to inject"`
-	RecordSkip  int64  `long:"skip" description:"Number of records to skip before injecting"`
-	QueueSize   int    `long:"batch-size" description:"Maximum number of updates to keep queued"`
-	Best        bool   `long:"only-best" description:"only keep best path routes"`
-	SkipV4      bool   `long:"no-ipv4" description:"Skip importing IPv4 routes"`
-	SkipV6      bool   `long:"no-ipv4" description:"Skip importing IPv6 routes"`
-	NextHop     net.IP `long:"nexthop" description:"Rewrite nexthop"`
-	PeerASN     uint32 `long:"peer-asn" description:"Inject prefixes only from specified AS number"`
+	Filename    string     `long:"filename" description:"MRT file name"`
+	RecordCount int64      `long:"count" description:"Number of records to inject"`
+	RecordSkip  int64      `long:"skip" description:"Number of records to skip before injecting"`
+	QueueSize   int        `long:"batch-size" description:"Maximum number of updates to keep queued"`
+	Best        bool       `long:"only-best" description:"only keep best path routes"`
+	SkipV4      bool       `long:"no-ipv4" description:"Skip importing IPv4 routes"`
+	SkipV6      bool       `long:"no-ipv4" description:"Skip importing IPv6 routes"`
+	NextHop     netip.Addr `long:"nexthop" description:"Rewrite nexthop"`
+	PeerASN     uint32     `long:"peer-asn" description:"Inject prefixes only from specified AS number"`
 }
 
 var bmpOpts struct {
@@ -321,13 +322,13 @@ func newConn() (*grpc.ClientConn, error) {
 	return grpc.NewClient(target, grpcOpts...)
 }
 
-func addr2AddressFamily(a net.IP) *api.Family {
-	if a.To4() != nil {
+func addr2AddressFamily(a netip.Addr) *api.Family {
+	if a.Is4() {
 		return &api.Family{
 			Afi:  api.Family_AFI_IP,
 			Safi: api.Family_SAFI_UNICAST,
 		}
-	} else if a.To16() != nil {
+	} else if a.Is6() {
 		return &api.Family{
 			Afi:  api.Family_AFI_IP6,
 			Safi: api.Family_SAFI_UNICAST,
@@ -487,7 +488,7 @@ func exitWithError(err error) {
 	os.Exit(1)
 }
 
-func getNextHopFromPathAttributes(attrs []bgp.PathAttributeInterface) net.IP {
+func getNextHopFromPathAttributes(attrs []bgp.PathAttributeInterface) netip.Addr {
 	for _, attr := range attrs {
 		switch a := attr.(type) {
 		case *bgp.PathAttributeNextHop:
@@ -496,5 +497,5 @@ func getNextHopFromPathAttributes(attrs []bgp.PathAttributeInterface) net.IP {
 			return a.Nexthop
 		}
 	}
-	return nil
+	return netip.Addr{}
 }

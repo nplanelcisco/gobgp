@@ -18,6 +18,7 @@ package zebra
 import (
 	"encoding/binary"
 	"net"
+	"net/netip"
 	"syscall"
 	"testing"
 
@@ -154,12 +155,12 @@ func Test_interfaceAddressUpdateBody(t *testing.T) {
 		pos++
 		buf[pos] = 0x2 // family
 		pos++
-		ip := net.ParseIP("192.168.100.1").To4() // prefix
+		ip := netip.MustParseAddr("192.168.100.1").AsSlice() // prefix
 		copy(buf[pos:pos+4], []byte(ip))
 		pos += 4
 		buf[pos] = byte(24) // prefix len
 		pos++
-		dst := net.ParseIP("192.168.100.255").To4() // destination
+		dst := netip.MustParseAddr("192.168.100.255").AsSlice() // destination
 		copy(buf[pos:pos+4], []byte(dst))
 
 		b := &interfaceAddressUpdateBody{}
@@ -169,8 +170,7 @@ func Test_interfaceAddressUpdateBody(t *testing.T) {
 
 		assert.Equal(uint32(0), b.index)
 		assert.Equal(interfaceAddressFlag(1), b.flags)
-		assert.Equal("192.168.100.1", b.prefix.String())
-		assert.Equal(uint8(24), b.length)
+		assert.Equal("192.168.100.1/24", b.prefix.String())
 		assert.Equal("192.168.100.255", b.destination.String())
 
 		// af invalid
@@ -191,7 +191,7 @@ func Test_routerIDUpdateBody(t *testing.T) {
 		pos := 0
 		buf[pos] = 0x2
 		pos++
-		ip := net.ParseIP("192.168.100.1").To4()
+		ip := netip.MustParseAddr("192.168.100.1").AsSlice()
 		copy(buf[pos:pos+4], []byte(ip))
 		pos += 4
 		buf[pos] = byte(32)
@@ -200,8 +200,7 @@ func Test_routerIDUpdateBody(t *testing.T) {
 		software := NewSoftware(v, "")
 		err := b.decodeFromBytes(buf, v, software)
 		assert.NoError(err)
-		assert.Equal("192.168.100.1", b.prefix.String())
-		assert.Equal(uint8(32), b.length)
+		assert.Equal("192.168.100.1/32", b.prefix.String())
 
 		// af invalid
 		buf[0] = 0x4
@@ -269,7 +268,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 		}
 		buf[pos] = 24 // PrefixLen
 		pos++
-		ip := net.ParseIP("192.168.100.0").To4()
+		ip := netip.MustParseAddr("192.168.100.0").AsSlice()
 		copy(buf[pos:pos+3], []byte(ip))
 		pos += 3
 		switch v {
@@ -288,7 +287,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 			buf[pos] = 1
 			pos++
 		}
-		nexthop := net.ParseIP("0.0.0.0").To4()
+		nexthop := netip.MustParseAddr("0.0.0.0").AsSlice()
 		copy(buf[pos:pos+4], []byte(nexthop))
 		pos += 4
 		if v < 5 {
@@ -306,8 +305,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 		r := &IPRouteBody{API: command[v]}
 		err := r.decodeFromBytes(buf, v, software)
 		assert.NoError(err)
-		assert.Equal("192.168.100.0", r.Prefix.Prefix.String())
-		assert.Equal(uint8(0x18), r.Prefix.PrefixLen)
+		assert.Equal("192.168.100.0/24", r.Prefix.Prefix.String())
 		assert.Equal(message[v], r.Message)
 		assert.Equal("0.0.0.0", r.Nexthops[0].Gate.String())
 		switch v {
@@ -349,7 +347,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 
 		assert.Equal(byte(24), buf[pos])
 		pos++
-		ip = net.ParseIP("192.168.100.0").To4()
+		ip = netip.MustParseAddr("192.168.100.0").AsSlice()
 		assert.Equal([]byte(ip)[:3], buf[pos:pos+3])
 		pos += 3
 		switch v {
@@ -415,7 +413,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 		}
 		buf[pos] = 24 // PrefixLen
 		pos++
-		ip = net.ParseIP("192.168.100.0").To4()
+		ip = netip.MustParseAddr("192.168.100.0").AsSlice()
 		copy(buf[pos:pos+3], []byte(ip))
 		pos += 3
 		switch v {
@@ -434,7 +432,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 			buf[pos] = 1
 			pos++
 		}
-		nexthop = net.ParseIP("0.0.0.0").To4()
+		nexthop = netip.MustParseAddr("0.0.0.0").AsSlice()
 		copy(buf[pos:pos+4], []byte(nexthop))
 		pos += 4
 		if v < 5 {
@@ -493,7 +491,7 @@ func Test_IPRouteBody_IPv4(t *testing.T) {
 		}
 		buf[pos] = 24 // PrefixLen
 		pos++
-		ip = net.ParseIP("192.168.100.0").To4()
+		ip = netip.MustParseAddr("192.168.100.0").AsSlice()
 		copy(buf[pos:pos+3], []byte(ip))
 		pos += 3
 		buf[pos] = 1 // distance
@@ -571,7 +569,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 		}
 		buf[pos] = 64 // prefixLen
 		pos++
-		ip := net.ParseIP("2001:db8:0:f101::").To16()
+		ip := netip.MustParseAddr("2001:db8:0:f101::").AsSlice()
 		copy(buf[pos:pos+8], []byte(ip))
 		pos += 8
 		switch v {
@@ -590,7 +588,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 			buf[pos] = 1
 			pos++
 		}
-		nexthop := net.ParseIP("::").To16()
+		nexthop := netip.MustParseAddr("::").AsSlice()
 		copy(buf[pos:pos+16], []byte(nexthop))
 		pos += 16
 		if v < 5 {
@@ -608,8 +606,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 		r := &IPRouteBody{API: command[v]}
 		err := r.decodeFromBytes(buf, v, software)
 		assert.NoError(err)
-		assert.Equal("2001:db8:0:f101::", r.Prefix.Prefix.String())
-		assert.Equal(uint8(64), r.Prefix.PrefixLen)
+		assert.Equal("2001:db8:0:f101::/64", r.Prefix.Prefix.String())
 		assert.Equal(message[v], r.Message)
 		assert.Equal("::", r.Nexthops[0].Gate.String())
 		switch v {
@@ -650,7 +647,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 		}
 		assert.Equal(byte(64), buf[pos])
 		pos++
-		ip = net.ParseIP("2001:db8:0:f101::").To16()
+		ip = netip.MustParseAddr("2001:db8:0:f101::").AsSlice()
 		assert.Equal([]byte(ip)[:8], buf[pos:pos+8])
 		pos += 8
 		switch v {
@@ -669,7 +666,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 			assert.Equal(byte(0x1), buf[pos])
 			pos++
 		}
-		ip = net.ParseIP("::").To16()
+		ip = netip.MustParseAddr("::").AsSlice()
 		assert.Equal([]byte(ip), buf[pos:pos+16])
 		pos += 16
 		switch v { // Only Quagga (ZAPI version 2,3) and FRR 3.x (ZAPI version 4)
@@ -719,7 +716,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 		}
 		buf[pos] = 64 // prefixLen
 		pos++
-		ip = net.ParseIP("2001:db8:0:f101::").To16()
+		ip = netip.MustParseAddr("2001:db8:0:f101::").AsSlice()
 		copy(buf[pos:pos+8], []byte(ip))
 		pos += 8
 		switch v {
@@ -738,7 +735,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 			buf[pos] = 1
 			pos++
 		}
-		nexthop = net.ParseIP("::").To16()
+		nexthop = netip.MustParseAddr("::").AsSlice()
 		copy(buf[pos:pos+16], []byte(nexthop))
 		pos += 16
 		if v < 5 {
@@ -799,7 +796,7 @@ func Test_IPRouteBody_IPv6(t *testing.T) {
 		}
 		buf[pos] = 16 // PrefixLen
 		pos++
-		ip = net.ParseIP("2501::").To16()
+		ip = netip.MustParseAddr("2501::").AsSlice()
 		copy(buf[pos:pos+2], []byte(ip))
 		pos += 2
 		buf[pos] = 1                             // distance
@@ -818,7 +815,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 	// decodeFromBytes
 	pos := 0
 	buf := make([]byte, 18)
-	ip := net.ParseIP("192.168.50.0").To4()
+	ip := netip.MustParseAddr("192.168.50.0").AsSlice()
 	copy(buf[:4], []byte(ip)) // addr
 	pos += 4
 	binary.BigEndian.PutUint32(buf[pos:], 10) // metric
@@ -827,7 +824,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 	pos++
 	buf[pos] = byte(4)
 	pos++
-	ip = net.ParseIP("172.16.1.101").To4()
+	ip = netip.MustParseAddr("172.16.1.101").AsSlice()
 	copy(buf[pos:pos+4], []byte(ip))
 	pos += 4
 	binary.BigEndian.PutUint32(buf[pos:], 3)
@@ -846,7 +843,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 
 	// serialize
 	buf, err = b.serialize(v, software)
-	ip = net.ParseIP("192.168.50.0").To4()
+	ip = netip.MustParseAddr("192.168.50.0").AsSlice()
 	assert.NoError(err)
 	assert.Equal([]byte(ip)[:4], buf[:4])
 
@@ -861,7 +858,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 	// decodeFromBytes
 	pos = 0
 	buf = make([]byte, 46)
-	ip = net.ParseIP("2001:db8:0:f101::").To16()
+	ip = netip.MustParseAddr("2001:db8:0:f101::").AsSlice()
 	copy(buf[:16], []byte(ip))
 	pos += 16
 	binary.BigEndian.PutUint32(buf[pos:], 10)
@@ -870,7 +867,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 	pos++
 	buf[pos] = byte(7)
 	pos++
-	ip = net.ParseIP("2001:db8:0:1111::1").To16()
+	ip = netip.MustParseAddr("2001:db8:0:1111::1").AsSlice()
 	copy(buf[pos:pos+16], []byte(ip))
 	pos += 16
 	binary.BigEndian.PutUint32(buf[pos:], 3)
@@ -886,7 +883,7 @@ func Test_nexthopLookupBody(t *testing.T) {
 
 	// serialize
 	buf, err = b.serialize(v, software)
-	ip = net.ParseIP("2001:db8:0:f101::").To16()
+	ip = netip.MustParseAddr("2001:db8:0:f101::").AsSlice()
 	assert.NoError(err)
 	assert.Equal([]byte(ip)[:16], buf[:16])
 
@@ -904,7 +901,7 @@ func Test_importLookupBody(t *testing.T) {
 	// decodeFromBytes
 	pos := 0
 	buf := make([]byte, 18)
-	ip := net.ParseIP("192.168.50.0").To4()
+	ip := netip.MustParseAddr("192.168.50.0").AsSlice()
 	copy(buf[:4], []byte(ip))
 	pos += 4
 	binary.BigEndian.PutUint32(buf[pos:], 10)
@@ -913,7 +910,7 @@ func Test_importLookupBody(t *testing.T) {
 	pos++
 	buf[pos] = byte(4)
 	pos++
-	ip = net.ParseIP("172.16.1.101").To4()
+	ip = netip.MustParseAddr("172.16.1.101").AsSlice()
 	copy(buf[pos:pos+4], []byte(ip))
 	pos += 4
 	binary.BigEndian.PutUint32(buf[pos:], 3)
@@ -932,7 +929,7 @@ func Test_importLookupBody(t *testing.T) {
 	// serialize
 	b.prefixLength = uint8(24)
 	buf, err = b.serialize(v, software)
-	ip = net.ParseIP("192.168.50.0").To4()
+	ip = netip.MustParseAddr("192.168.50.0").AsSlice()
 	assert.NoError(err)
 	assert.Equal(uint8(24), buf[0])
 	assert.Equal([]byte(ip)[:4], buf[1:5])
@@ -974,10 +971,10 @@ func Test_NexthopRegisterBody(t *testing.T) {
 		// Test decoded values
 		assert.Equal(uint8(1), b.Nexthops[0].connected)
 		assert.Equal(uint16(syscall.AF_INET), b.Nexthops[0].Family)
-		assert.Equal(net.ParseIP("192.168.1.1").To4(), b.Nexthops[0].Prefix)
+		assert.Equal(netip.MustParseAddr("192.168.1.1").AsSlice(), b.Nexthops[0].Prefix)
 		assert.Equal(uint8(0), b.Nexthops[1].connected)
 		assert.Equal(uint16(syscall.AF_INET6), b.Nexthops[1].Family)
-		assert.Equal(net.ParseIP("2001:db8:1:1::1").To16(), b.Nexthops[1].Prefix)
+		assert.Equal(netip.MustParseAddr("2001:db8:1:1::1").AsSlice(), b.Nexthops[1].Prefix)
 
 		// Test serialize()
 		bufOut, err := b.serialize(v, software)
@@ -1057,11 +1054,11 @@ func Test_NexthopUpdateBody(t *testing.T) {
 
 		// Test decoded values
 		assert.Equal(uint8(syscall.AF_INET), b.Prefix.Family)
-		assert.Equal(net.ParseIP("192.168.1.1").To4(), b.Prefix.Prefix)
+		assert.Equal(netip.MustParsePrefix("192.168.1.1/32"), b.Prefix.Prefix)
 		assert.Equal(uint32(1), b.Metric)
 		nexthop := Nexthop{
 			Type:    nexthopType[v],
-			Gate:    net.ParseIP("192.168.1.1").To4(),
+			Gate:    netip.MustParseAddr("192.168.1.1"),
 			Ifindex: uint32(2),
 		}
 		assert.Equal(1, len(b.Nexthops))

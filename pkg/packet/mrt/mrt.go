@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
@@ -220,8 +220,8 @@ type Body interface {
 
 type Peer struct {
 	Type      uint8
-	BgpId     net.IP
-	IpAddress net.IP
+	BgpId     netip.Addr
+	IpAddress netip.Addr
 	AS        uint32
 }
 
@@ -232,20 +232,20 @@ func (p *Peer) DecodeFromBytes(data []byte) ([]byte, error) {
 		return nil, errNotAllPeerBytesAvailable
 	}
 	p.Type = data[0]
-	p.BgpId = net.IP(data[1:5])
+	p.BgpId, _ = netip.AddrFromSlice(data[1:5])
 	data = data[5:]
 
 	if p.Type&1 > 0 {
 		if len(data) < 16 {
 			return nil, errNotAllPeerBytesAvailable
 		}
-		p.IpAddress = net.IP(data[:16])
+		p.IpAddress, _ = netip.AddrFromSlice(data[:16])
 		data = data[16:]
 	} else {
 		if len(data) < 4 {
 			return nil, errNotAllPeerBytesAvailable
 		}
-		p.IpAddress = net.IP(data[:4])
+		p.IpAddress, _ = netip.AddrFromSlice(data[:4])
 		data = data[4:]
 	}
 
@@ -271,12 +271,8 @@ func (p *Peer) Serialize() ([]byte, error) {
 	var bbuf []byte
 	buf := make([]byte, 5)
 	buf[0] = p.Type
-	copy(buf[1:], p.BgpId.To4())
-	if p.Type&1 > 0 {
-		buf = append(buf, p.IpAddress.To16()...)
-	} else {
-		buf = append(buf, p.IpAddress.To4()...)
-	}
+	copy(buf[1:], p.BgpId.AsSlice())
+	buf = append(buf, p.IpAddress.AsSlice()...)
 	if p.Type&(1<<1) > 0 {
 		bbuf, err = packValues(p.AS)
 	} else {
@@ -293,17 +289,17 @@ func (p *Peer) Serialize() ([]byte, error) {
 
 func NewPeer(bgpid string, ipaddr string, asn uint32, isAS4 bool) *Peer {
 	t := 0
-	addr := net.ParseIP(ipaddr).To4()
-	if addr == nil {
+	addr, _ := netip.ParseAddr(ipaddr)
+	if addr.Is6() {
 		t |= 1
-		addr = net.ParseIP(ipaddr).To16()
 	}
 	if isAS4 {
 		t |= 1 << 1
 	}
+	id, _ := netip.ParseAddr(bgpid)
 	return &Peer{
 		Type:      uint8(t),
-		BgpId:     net.ParseIP(bgpid).To4(),
+		BgpId:     id,
 		IpAddress: addr,
 		AS:        asn,
 	}
@@ -314,7 +310,7 @@ func (p *Peer) String() string {
 }
 
 type PeerIndexTable struct {
-	CollectorBgpId net.IP
+	CollectorBgpId netip.Addr
 	ViewName       string
 	Peers          []*Peer
 }
@@ -325,7 +321,11 @@ func (t *PeerIndexTable) DecodeFromBytes(data []byte) error {
 	if len(data) < 6 {
 		return errNnotAllPeerIndexBytesAvailable
 	}
-	t.CollectorBgpId = net.IP(data[:4])
+	var ok bool
+	t.CollectorBgpId, ok = netip.AddrFromSlice(data[:4])
+	if !ok {
+		return fmt.Errorf("invalid BGP ID: %s", data[:4])
+	}
 	viewLen := binary.BigEndian.Uint16(data[4:6])
 	if len(data) < 6+int(viewLen) {
 		return errNnotAllPeerIndexBytesAvailable
@@ -355,7 +355,7 @@ func (t *PeerIndexTable) DecodeFromBytes(data []byte) error {
 
 func (t *PeerIndexTable) Serialize() ([]byte, error) {
 	buf := make([]byte, 8+len(t.ViewName))
-	copy(buf, t.CollectorBgpId.To4())
+	copy(buf, t.CollectorBgpId.AsSlice()[:4])
 	binary.BigEndian.PutUint16(buf[4:], uint16(len(t.ViewName)))
 	copy(buf[6:], t.ViewName)
 	binary.BigEndian.PutUint16(buf[6+len(t.ViewName):], uint16(len(t.Peers)))
@@ -370,8 +370,9 @@ func (t *PeerIndexTable) Serialize() ([]byte, error) {
 }
 
 func NewPeerIndexTable(bgpid string, viewname string, peers []*Peer) *PeerIndexTable {
+	addr, _ := netip.ParseAddr(bgpid)
 	return &PeerIndexTable{
-		CollectorBgpId: net.ParseIP(bgpid).To4(),
+		CollectorBgpId: addr,
 		ViewName:       viewname,
 		Peers:          peers,
 	}
@@ -603,7 +604,7 @@ func (u *Rib) String() string {
 
 type GeoPeer struct {
 	Type      uint8
-	BgpId     net.IP
+	BgpId     netip.Addr
 	Latitude  float32
 	Longitude float32
 }
@@ -617,7 +618,7 @@ func (p *GeoPeer) DecodeFromBytes(data []byte) ([]byte, error) {
 	if p.Type != uint8(0) {
 		return nil, fmt.Errorf("unsupported peer type for GeoPeer: %d", p.Type)
 	}
-	p.BgpId = net.IP(data[1:5])
+	p.BgpId, _ = netip.AddrFromSlice(data[1:5])
 	p.Latitude = math.Float32frombits(binary.BigEndian.Uint32(data[5:9]))
 	p.Longitude = math.Float32frombits(binary.BigEndian.Uint32(data[9:13]))
 	return data[13:], nil
@@ -626,20 +627,20 @@ func (p *GeoPeer) DecodeFromBytes(data []byte) ([]byte, error) {
 func (p *GeoPeer) Serialize() ([]byte, error) {
 	buf := make([]byte, 13)
 	buf[0] = uint8(0) // Peer IP Address and Peer AS should not be included
-	bgpId := p.BgpId.To4()
-	if bgpId == nil {
+	if !p.BgpId.Is4() {
 		return nil, fmt.Errorf("invalid BgpId: %s", p.BgpId)
 	}
-	copy(buf[1:5], bgpId)
+	copy(buf[1:5], p.BgpId.AsSlice())
 	binary.BigEndian.PutUint32(buf[5:9], math.Float32bits(p.Latitude))
 	binary.BigEndian.PutUint32(buf[9:13], math.Float32bits(p.Longitude))
 	return buf, nil
 }
 
 func NewGeoPeer(bgpid string, latitude float32, longitude float32) *GeoPeer {
+	addr, _ := netip.ParseAddr(bgpid)
 	return &GeoPeer{
 		Type:      0, // Peer IP Address and Peer AS should not be included
-		BgpId:     net.ParseIP(bgpid).To4(),
+		BgpId:     addr,
 		Latitude:  latitude,
 		Longitude: longitude,
 	}
@@ -650,7 +651,7 @@ func (p *GeoPeer) String() string {
 }
 
 type GeoPeerTable struct {
-	CollectorBgpId     net.IP
+	CollectorBgpId     netip.Addr
 	CollectorLatitude  float32
 	CollectorLongitude float32
 	Peers              []*GeoPeer
@@ -660,7 +661,7 @@ func (t *GeoPeerTable) DecodeFromBytes(data []byte) error {
 	if len(data) < 14 {
 		return fmt.Errorf("not all GeoPeerTable bytes are available")
 	}
-	t.CollectorBgpId = net.IP(data[:4])
+	t.CollectorBgpId, _ = netip.AddrFromSlice(data[:4])
 	t.CollectorLatitude = math.Float32frombits(binary.BigEndian.Uint32(data[4:8]))
 	t.CollectorLongitude = math.Float32frombits(binary.BigEndian.Uint32(data[8:12]))
 	peerCount := binary.BigEndian.Uint16(data[12:14])
@@ -679,11 +680,10 @@ func (t *GeoPeerTable) DecodeFromBytes(data []byte) error {
 
 func (t *GeoPeerTable) Serialize() ([]byte, error) {
 	buf := make([]byte, 14)
-	collectorBgpId := t.CollectorBgpId.To4()
-	if collectorBgpId == nil {
+	if !t.CollectorBgpId.Is4() {
 		return nil, fmt.Errorf("invalid CollectorBgpId: %s", t.CollectorBgpId)
 	}
-	copy(buf[:4], collectorBgpId)
+	copy(buf[:4], t.CollectorBgpId.AsSlice())
 	binary.BigEndian.PutUint32(buf[4:8], math.Float32bits(t.CollectorLatitude))
 	binary.BigEndian.PutUint32(buf[8:12], math.Float32bits(t.CollectorLongitude))
 	binary.BigEndian.PutUint16(buf[12:14], uint16(len(t.Peers)))
@@ -698,8 +698,9 @@ func (t *GeoPeerTable) Serialize() ([]byte, error) {
 }
 
 func NewGeoPeerTable(bgpid string, latitude float32, longitude float32, peers []*GeoPeer) *GeoPeerTable {
+	addr, _ := netip.ParseAddr(bgpid)
 	return &GeoPeerTable{
-		CollectorBgpId:     net.ParseIP(bgpid).To4(),
+		CollectorBgpId:     addr,
 		CollectorLatitude:  latitude,
 		CollectorLongitude: longitude,
 		Peers:              peers,
@@ -715,8 +716,8 @@ type BGP4MPHeader struct {
 	LocalAS        uint32
 	InterfaceIndex uint16
 	AddressFamily  uint16
-	PeerIpAddress  net.IP
-	LocalIpAddress net.IP
+	PeerIpAddress  netip.Addr
+	LocalIpAddress netip.Addr
 	isAS4          bool
 }
 
@@ -743,15 +744,15 @@ func (m *BGP4MPHeader) decodeFromBytes(data []byte) ([]byte, error) {
 		if len(data) < 12 {
 			return nil, errors.New("not all IPv4 peer bytes available")
 		}
-		m.PeerIpAddress = net.IP(data[4:8]).To4()
-		m.LocalIpAddress = net.IP(data[8:12]).To4()
+		m.PeerIpAddress, _ = netip.AddrFromSlice(data[4:8])
+		m.LocalIpAddress, _ = netip.AddrFromSlice(data[8:12])
 		data = data[12:]
 	case bgp.AFI_IP6:
 		if len(data) < 36 {
 			return nil, errors.New("not all IPv6 peer bytes available")
 		}
-		m.PeerIpAddress = net.IP(data[4:20])
-		m.LocalIpAddress = net.IP(data[20:36])
+		m.PeerIpAddress, _ = netip.AddrFromSlice(data[4:20])
+		m.LocalIpAddress, _ = netip.AddrFromSlice(data[20:36])
 		data = data[36:]
 	default:
 		return nil, fmt.Errorf("unsupported address family: %d", m.AddressFamily)
@@ -774,12 +775,12 @@ func (m *BGP4MPHeader) serialize() ([]byte, error) {
 	switch m.AddressFamily {
 	case bgp.AFI_IP:
 		bbuf = make([]byte, 8)
-		copy(bbuf, m.PeerIpAddress.To4())
-		copy(bbuf[4:], m.LocalIpAddress.To4())
+		copy(bbuf, m.PeerIpAddress.AsSlice())
+		copy(bbuf[4:], m.LocalIpAddress.AsSlice())
 	case bgp.AFI_IP6:
 		bbuf = make([]byte, 32)
-		copy(bbuf, m.PeerIpAddress)
-		copy(bbuf[16:], m.LocalIpAddress)
+		copy(bbuf, m.PeerIpAddress.AsSlice())
+		copy(bbuf[16:], m.LocalIpAddress.AsSlice())
 	default:
 		return nil, fmt.Errorf("unsupported address family: %d", m.AddressFamily)
 	}
@@ -788,18 +789,14 @@ func (m *BGP4MPHeader) serialize() ([]byte, error) {
 
 func newBGP4MPHeader(peeras, localas uint32, intfindex uint16, peerip, localip string, isAS4 bool) (*BGP4MPHeader, error) {
 	var af uint16
-	paddr := net.ParseIP(peerip).To4()
-	laddr := net.ParseIP(localip).To4()
-	if paddr != nil && laddr != nil {
+	paddr, _ := netip.ParseAddr(peerip)
+	laddr, _ := netip.ParseAddr(localip)
+	if paddr.Is4() && laddr.Is4() {
 		af = bgp.AFI_IP
+	} else if paddr.Is6() && laddr.Is6() {
+		af = bgp.AFI_IP6
 	} else {
-		paddr = net.ParseIP(peerip).To16()
-		laddr = net.ParseIP(localip).To16()
-		if paddr != nil && laddr != nil {
-			af = bgp.AFI_IP6
-		} else {
-			return nil, fmt.Errorf("peer IP Address and Local IP Address must have the same address family")
-		}
+		return nil, fmt.Errorf("peer IP Address and Local IP Address must have the same address family")
 	}
 	return &BGP4MPHeader{
 		PeerAS:         peeras,

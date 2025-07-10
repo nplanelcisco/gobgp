@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"runtime"
 	"slices"
 	"strconv"
@@ -968,11 +969,11 @@ func newPeerandInfo(t *testing.T, myAs, as uint32, address string, rib *table.Ta
 		rib,
 		policy,
 		logger)
-	p.fsm.peerInfo.ID = net.ParseIP(address)
+	p.fsm.peerInfo.ID = netip.MustParseAddr(address)
 	for _, f := range rib.GetRFlist() {
 		p.fsm.rfMap[f] = bgp.BGP_ADD_PATH_NONE
 	}
-	return p, &table.PeerInfo{AS: as, Address: net.ParseIP(address), ID: net.ParseIP(address)}
+	return p, &table.PeerInfo{AS: as, Address: netip.MustParseAddr(address), ID: netip.MustParseAddr(address)}
 }
 
 func process(rib *table.TableManager, l []*table.Path) (*table.Path, *table.Path) {
@@ -1689,7 +1690,7 @@ func TestDoNotReactToDuplicateRTCMemberships(t *testing.T) {
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
-						if vpnPath.Prefix.Equal(prefix.Prefix) {
+						if vpnPath.Prefix == prefix.Prefix {
 							t.Logf("tester found expected prefix: %s", vpnPath.Prefix)
 							found = true
 						} else {
@@ -1713,9 +1714,9 @@ func TestDoNotReactToDuplicateRTCMemberships(t *testing.T) {
 	rtcNLRI := bgp.NewRouteTargetMembershipNLRI(1, rt)
 	rtcPath := table.NewPath(&table.PeerInfo{
 		AS:      1,
-		Address: net.ParseIP("127.0.0.1"),
-		LocalID: net.ParseIP("2.2.2.2"),
-		ID:      net.ParseIP("1.1.1.1"),
+		Address: netip.MustParseAddr("127.0.0.1"),
+		LocalID: netip.MustParseAddr("2.2.2.2"),
+		ID:      netip.MustParseAddr("1.1.1.1"),
 	}, rtcNLRI, false, []bgp.PathAttributeInterface{
 		bgp.NewPathAttributeOrigin(0),
 		bgp.NewPathAttributeNextHop("1.1.1.1"),
@@ -1793,7 +1794,7 @@ func TestDelVrfWithRTC(t *testing.T) {
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
-						if vpnPath.Prefix.Equal(prefix.Prefix) {
+						if vpnPath.Prefix == prefix.Prefix {
 							t.Logf("tester found expected prefix: %s", vpnPath.Prefix)
 							found = true
 						} else {
@@ -1826,7 +1827,7 @@ func TestDelVrfWithRTC(t *testing.T) {
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
-						if vpnPath.Prefix.Equal(prefix.Prefix) && path.IsWithdraw {
+						if vpnPath.Prefix == prefix.Prefix && path.IsWithdraw {
 							t.Logf("tester found expected withdrawn prefix: %s", vpnPath.Prefix)
 							withdrawVPN = true
 						} else {
@@ -1906,7 +1907,7 @@ func TestSameRTCMessagesWithOneDifferrence(t *testing.T) {
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
-						if vpnPath.Prefix.Equal(prefix.Prefix) {
+						if vpnPath.Prefix == prefix.Prefix {
 							t.Logf("tester found expected prefix: %s", vpnPath.Prefix)
 							found = true
 						} else {
@@ -1944,7 +1945,7 @@ func TestSameRTCMessagesWithOneDifferrence(t *testing.T) {
 				for _, path := range msg.PathList {
 					t.Logf("tester received path: %s", path.String())
 					if vpnPath, ok := path.GetNlri().(*bgp.LabeledVPNIPAddrPrefix); ok {
-						if vpnPath.Prefix.Equal(prefix.Prefix) {
+						if vpnPath.Prefix == prefix.Prefix {
 							if path.IsWithdraw {
 								t.Fatalf("active path is withdrawn")
 							} else {

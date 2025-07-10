@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -281,16 +281,14 @@ func parseNeighborSet(args []string) (*api.DefinedSet, error) {
 	args = args[1:]
 	list := make([]string, 0, len(args))
 	for _, arg := range args {
-		address := net.ParseIP(arg)
-		if address.To4() != nil {
+		address, err := netip.ParseAddr(arg)
+		if err != nil || !address.IsValid() {
+			return nil, fmt.Errorf("invalid address or prefix: %s\nplease enter ipv4 or ipv6 format", arg)
+		}
+		if address.Is4() {
 			list = append(list, fmt.Sprintf("%s/32", arg))
-		} else if address.To16() != nil {
+		} else if address.Is6() {
 			list = append(list, fmt.Sprintf("%s/128", arg))
-		} else {
-			_, _, err := net.ParseCIDR(arg)
-			if err != nil {
-				return nil, fmt.Errorf("invalid address or prefix: %s\nplease enter ipv4 or ipv6 format", arg)
-			}
 		}
 	}
 	return &api.DefinedSet{

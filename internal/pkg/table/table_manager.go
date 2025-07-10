@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"net/netip"
 	"time"
 
 	farm "github.com/dgryski/go-farm"
@@ -248,7 +249,7 @@ func (manager *TableManager) handleMacMobility(path *Path) []*Path {
 		return nil
 	}
 
-	f := func(p *Path) (bgp.EthernetSegmentIdentifier, uint32, net.HardwareAddr, int, net.IP) {
+	f := func(p *Path) (bgp.EthernetSegmentIdentifier, uint32, net.HardwareAddr, int, netip.Addr) {
 		nlri := p.GetNlri().(*bgp.EVPNNLRI)
 		d := nlri.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
 		ecs := p.GetExtCommunities()
@@ -279,7 +280,7 @@ func (manager *TableManager) handleMacMobility(path *Path) []*Path {
 		}
 		e2, et2, m2, s2, i2 := f(path2)
 		if et1 == et2 && bytes.Equal(m1, m2) && !bytes.Equal(e1.Value, e2.Value) {
-			if s1 > s2 || s1 == s2 && bytes.Compare(i1, i2) < 0 {
+			if s1 > s2 || s1 == s2 && i1.Compare(i2) < 0 {
 				pathList = append(pathList, path2.Clone(true))
 			}
 		}
@@ -352,12 +353,12 @@ func (manager *TableManager) GetPathListWithMac(id string, as uint32, rfList []b
 	return paths
 }
 
-func (manager *TableManager) GetPathListWithNexthop(id string, rfList []bgp.Family, nexthop net.IP) []*Path {
+func (manager *TableManager) GetPathListWithNexthop(id string, rfList []bgp.Family, nexthop netip.Addr) []*Path {
 	paths := make([]*Path, 0, manager.getDestinationCount(rfList))
 	for _, rf := range rfList {
 		if t, ok := manager.Tables[rf]; ok {
 			for _, path := range t.GetKnownPathList(id, 0) {
-				if path.GetNexthop().Equal(nexthop) {
+				if path.GetNexthop().Compare(nexthop) == 0 {
 					paths = append(paths, path)
 				}
 			}

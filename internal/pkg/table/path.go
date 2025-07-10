@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/netip"
 	"slices"
 	"sort"
 	"time"
@@ -306,7 +307,7 @@ func UpdatePathAttrs(logger log.Logger, global *oc.Global, peer *oc.Neighbor, in
 				path.setPathAttr(bgp.NewPathAttributeOriginatorId(info.LocalID.String()))
 			} else if path.getPathAttr(bgp.BGP_ATTR_TYPE_ORIGINATOR_ID) == nil {
 				if path.IsLocal() {
-					path.setPathAttr(bgp.NewPathAttributeOriginatorId(global.Config.RouterId))
+					path.setPathAttr(bgp.NewPathAttributeOriginatorId(global.Config.RouterId.String()))
 				} else {
 					path.setPathAttr(bgp.NewPathAttributeOriginatorId(info.ID.String()))
 				}
@@ -345,7 +346,7 @@ func (path *Path) setTimestamp(t time.Time) {
 }
 
 func (path *Path) IsLocal() bool {
-	return path.GetSource().Address == nil
+	return path.GetSource().Address.IsValid() || path.GetSource().Address.IsUnspecified()
 }
 
 func (path *Path) IsIBGP() bool {
@@ -443,7 +444,7 @@ func (path *Path) GetSourceAs() uint32 {
 	return 0
 }
 
-func (path *Path) GetNexthop() net.IP {
+func (path *Path) GetNexthop() netip.Addr {
 	attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_NEXT_HOP)
 	if attr != nil {
 		return attr.(*bgp.PathAttributeNextHop).Value
@@ -452,11 +453,11 @@ func (path *Path) GetNexthop() net.IP {
 	if attr != nil {
 		return attr.(*bgp.PathAttributeMpReachNLRI).Nexthop
 	}
-	return net.IP{}
+	return netip.Addr{}
 }
 
-func (path *Path) SetNexthop(nexthop net.IP) {
-	if path.GetFamily() == bgp.RF_IPv4_UC && nexthop.To4() == nil {
+func (path *Path) SetNexthop(nexthop netip.Addr) {
+	if path.GetFamily() == bgp.RF_IPv4_UC && nexthop.Is4() {
 		path.delPathAttr(bgp.BGP_ATTR_TYPE_NEXT_HOP)
 		mpreach := bgp.NewPathAttributeMpReachNLRI(nexthop.String(), path.GetNlri())
 		path.setPathAttr(mpreach)
@@ -984,14 +985,14 @@ func (path *Path) RemoveLocalPref() {
 	}
 }
 
-func (path *Path) GetOriginatorID() net.IP {
+func (path *Path) GetOriginatorID() netip.Addr {
 	if attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_ORIGINATOR_ID); attr != nil {
 		return attr.(*bgp.PathAttributeOriginatorId).Value
 	}
-	return nil
+	return netip.Addr{}
 }
 
-func (path *Path) GetClusterList() []net.IP {
+func (path *Path) GetClusterList() []netip.Addr {
 	if attr := path.getPathAttr(bgp.BGP_ATTR_TYPE_CLUSTER_LIST); attr != nil {
 		return attr.(*bgp.PathAttributeClusterList).Value
 	}
@@ -1056,8 +1057,8 @@ func (path *Path) MarshalJSON() ([]byte, error) {
 		Age        int64                        `json:"age"`
 		Withdrawal bool                         `json:"withdrawal,omitempty"`
 		Validation string                       `json:"validation,omitempty"`
-		SourceID   net.IP                       `json:"source-id,omitempty"`
-		NeighborIP net.IP                       `json:"neighbor-ip,omitempty"`
+		SourceID   netip.Addr                   `json:"source-id,omitempty"`
+		NeighborIP netip.Addr                   `json:"neighbor-ip,omitempty"`
 		Stale      bool                         `json:"stale,omitempty"`
 		UUID       string                       `json:"uuid,omitempty"`
 		ID         uint32                       `json:"id,omitempty"`
@@ -1118,7 +1119,7 @@ func (v *Vrf) ToGlobalPath(path *Path) error {
 	case bgp.RF_IPv4_UC:
 		n := nlri.(*bgp.IPAddrPrefix)
 		pathIdentifier := path.GetNlri().PathIdentifier()
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
+		path.OriginInfo().nlri = bgp.NewLabeledVPNIPAddrPrefix(uint8(n.Prefix.Bits()), n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
 		path.GetNlri().SetPathIdentifier(pathIdentifier)
 	case bgp.RF_FS_IPv4_UC:
 		n := nlri.(*bgp.FlowSpecIPv4Unicast)
@@ -1128,7 +1129,7 @@ func (v *Vrf) ToGlobalPath(path *Path) error {
 	case bgp.RF_IPv6_UC:
 		n := nlri.(*bgp.IPv6AddrPrefix)
 		pathIdentifier := path.GetNlri().PathIdentifier()
-		path.OriginInfo().nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
+		path.OriginInfo().nlri = bgp.NewLabeledVPNIPv6AddrPrefix(uint8(n.Prefix.Bits()), n.Prefix.String(), *bgp.NewMPLSLabelStack(v.MplsLabel), v.Rd)
 		path.GetNlri().SetPathIdentifier(pathIdentifier)
 	case bgp.RF_FS_IPv6_UC:
 		n := nlri.(*bgp.FlowSpecIPv6Unicast)
@@ -1169,11 +1170,11 @@ func (p *Path) ToGlobal(vrf *Vrf) *Path {
 	switch rf := p.GetFamily(); rf {
 	case bgp.RF_IPv4_UC:
 		n := nlri.(*bgp.IPAddrPrefix)
-		nlri = bgp.NewLabeledVPNIPAddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
+		nlri = bgp.NewLabeledVPNIPAddrPrefix(uint8(n.Prefix.Bits()), n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
 		nlri.SetPathIdentifier(pathId)
 	case bgp.RF_IPv6_UC:
 		n := nlri.(*bgp.IPv6AddrPrefix)
-		nlri = bgp.NewLabeledVPNIPv6AddrPrefix(n.Length, n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
+		nlri = bgp.NewLabeledVPNIPv6AddrPrefix(uint8(n.Prefix.Bits()), n.Prefix.String(), *bgp.NewMPLSLabelStack(vrf.MplsLabel), vrf.Rd)
 		nlri.SetPathIdentifier(pathId)
 	case bgp.RF_EVPN:
 		n := nlri.(*bgp.EVPNNLRI)
@@ -1300,38 +1301,26 @@ func (p *Path) SetSource(peerInfo *PeerInfo) {
 	}
 }
 
-func nlriToIPNet(nlri bgp.AddrPrefixInterface) *net.IPNet {
+func nlriToIPNet(nlri bgp.AddrPrefixInterface) *netip.Prefix {
 	switch T := nlri.(type) {
 	case *bgp.IPAddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To4(),
-			Mask: net.CIDRMask(int(T.Length), 32),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	case *bgp.IPv6AddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To16(),
-			Mask: net.CIDRMask(int(T.Length), 128),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	case *bgp.LabeledIPAddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To4(),
-			Mask: net.CIDRMask(int(T.Length)-T.Labels.Len()*8, 32),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	case *bgp.LabeledIPv6AddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To16(),
-			Mask: net.CIDRMask(int(T.Length)-T.Labels.Len()*8, 128),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	case *bgp.LabeledVPNIPAddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To4(),
-			Mask: net.CIDRMask(int(T.Length)-T.Labels.Len()*8-T.RD.Len()*8, 32),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	case *bgp.LabeledVPNIPv6AddrPrefix:
-		return &net.IPNet{
-			IP:   T.Prefix.To16(),
-			Mask: net.CIDRMask(int(T.Length)-T.Labels.Len()*8-T.RD.Len()*8, 128),
-		}
+		p := T.Prefix.Masked()
+		return &p
 	}
-	return nil
+	return &netip.Prefix{}
 }

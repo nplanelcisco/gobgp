@@ -2,7 +2,7 @@ package bgp
 
 import (
 	"encoding/binary"
-	"net"
+	"net/netip"
 	"reflect"
 	"testing"
 
@@ -51,7 +51,7 @@ func TestBindingSIDRoundTrip(t *testing.T) {
 				},
 				Flags: 0x0,
 				BSID: &BSID{
-					Value: net.ParseIP("2001:1::1").To16(),
+					Value: netip.MustParseAddr("2001:1::1").AsSlice(),
 				},
 			},
 			fail: false,
@@ -205,12 +205,12 @@ func TestSegmentListRoundTrip(t *testing.T) {
 					&SegmentTypeB{
 						TunnelEncapSubTLV: TunnelEncapSubTLV{Type: EncapSubTLVType(TypeB), Length: 6},
 						Flags:             0,
-						SID:               net.ParseIP("2001:1::1").To16(),
+						SID:               netip.MustParseAddr("2001:1::1").AsSlice(),
 					},
 					&SegmentTypeB{
 						TunnelEncapSubTLV: TunnelEncapSubTLV{Type: EncapSubTLVType(TypeB), Length: 6},
 						Flags:             0,
-						SID:               net.ParseIP("2001:1::2").To16(),
+						SID:               netip.MustParseAddr("2001:1::2").AsSlice(),
 					},
 				},
 			},
@@ -235,7 +235,7 @@ func TestSegmentListRoundTrip(t *testing.T) {
 					&SegmentTypeB{
 						TunnelEncapSubTLV: TunnelEncapSubTLV{Type: EncapSubTLVType(TypeB), Length: 6},
 						Flags:             0,
-						SID:               net.ParseIP("2001:1::1").To16(),
+						SID:               netip.MustParseAddr("2001:1::1").AsSlice(),
 						SRv6EBS: &SRv6EndpointBehaviorStructure{
 							Behavior: 39,
 							BlockLen: 5,
@@ -247,7 +247,7 @@ func TestSegmentListRoundTrip(t *testing.T) {
 					&SegmentTypeB{
 						TunnelEncapSubTLV: TunnelEncapSubTLV{Type: EncapSubTLVType(TypeB), Length: 6},
 						Flags:             0,
-						SID:               net.ParseIP("2001:1::2").To16(),
+						SID:               netip.MustParseAddr("2001:1::2").AsSlice(),
 					},
 				},
 			},

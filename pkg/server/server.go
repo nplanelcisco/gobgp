@@ -207,11 +207,11 @@ func (s *BgpServer) delIncoming(ch *channels.InfiniteChannel) {
 
 func (s *BgpServer) listListeners(addr string) []*net.TCPListener {
 	list := make([]*net.TCPListener, 0, len(s.listeners))
-	rhs := net.ParseIP(addr).To4() != nil
+	rhs, _ := netip.ParseAddr(addr)
 	for _, l := range s.listeners {
 		host, _, _ := net.SplitHostPort(l.Addr().String())
-		lhs := net.ParseIP(host).To4() != nil
-		if lhs == rhs {
+		lhs, _ := netip.ParseAddr(host)
+		if lhs.Is4() == rhs.Is4() {
 			list = append(list, l.Listener())
 		}
 	}
@@ -499,16 +499,16 @@ func (s *BgpServer) Serve() {
 }
 
 func (s *BgpServer) matchLongestDynamicNeighborPrefix(a string) *peerGroup {
-	ipAddr := net.ParseIP(a)
-	longestMask := net.CIDRMask(0, 32).String()
+	ipAddr, _ := netip.ParseAddr(a)
+	longestMask := 0
 	var longestPG *peerGroup
 	for _, pg := range s.peerGroupMap {
 		for _, d := range pg.dynamicNeighbors {
-			_, netAddr, _ := net.ParseCIDR(d.Config.Prefix)
+			netAddr, _ := netip.ParsePrefix(d.Config.Prefix)
 			if netAddr.Contains(ipAddr) {
-				if netAddr.Mask.String() > longestMask ||
-					netAddr.Mask.String() == longestMask && longestMask == net.CIDRMask(0, 32).String() {
-					longestMask = netAddr.Mask.String()
+				if netAddr.Bits() > longestMask ||
+					netAddr.Bits() == longestMask && longestMask == 0 {
+					longestMask = netAddr.Bits()
 					longestPG = pg
 				}
 			}
@@ -592,7 +592,7 @@ func filterpath(peer *peer, path, old *table.Path) *table.Path {
 					peer.fsm.lock.RLock()
 					rrClusterID := peer.fsm.peerInfo.RouteReflectorClusterID
 					peer.fsm.lock.RUnlock()
-					if clusterID.Equal(rrClusterID) {
+					if clusterID == rrClusterID {
 						peer.fsm.logger.Debug("cluster list path attribute has local cluster id, ignore",
 							log.Fields{
 								"Topic":     "Peer",
@@ -896,7 +896,7 @@ func (s *BgpServer) toConfig(peer *peer, getAdvertised bool) *oc.Neighbor {
 		buf, _ := peer.fsm.recvOpen.Serialize()
 		// need to copy all values here
 		conf.State.ReceivedOpenMessage, _ = bgp.ParseBGPMessage(buf)
-		conf.State.RemoteRouterId = peer.fsm.peerInfo.ID.To4().String()
+		conf.State.RemoteRouterId = peer.fsm.peerInfo.ID.String()
 		peer.fsm.lock.RUnlock()
 	}
 	return &conf
@@ -915,12 +915,13 @@ func (s *BgpServer) notifyPrePolicyUpdateWatcher(peer *peer, pathList []*table.P
 	peer.fsm.lock.RLock()
 	_, y := peer.fsm.capMap[bgp.BGP_CAP_FOUR_OCTET_AS_NUMBER]
 	l, _ := peer.fsm.LocalHostPort()
+	laddr, _ := netip.ParseAddr(l)
 	ev := &watchEventUpdate{
 		Message:      msg,
 		PeerAS:       peer.fsm.peerInfo.AS,
 		LocalAS:      peer.fsm.peerInfo.LocalAS,
 		PeerAddress:  peer.fsm.peerInfo.Address,
-		LocalAddress: net.ParseIP(l),
+		LocalAddress: laddr,
 		PeerID:       peer.fsm.peerInfo.ID,
 		FourBytesAs:  y,
 		Timestamp:    timestamp,
@@ -946,11 +947,12 @@ func (s *BgpServer) notifyPostPolicyUpdateWatcher(peer *peer, pathList []*table.
 	peer.fsm.lock.RLock()
 	_, y := peer.fsm.capMap[bgp.BGP_CAP_FOUR_OCTET_AS_NUMBER]
 	l, _ := peer.fsm.LocalHostPort()
+	laddr, _ := netip.ParseAddr(l)
 	ev := &watchEventUpdate{
 		PeerAS:       peer.fsm.peerInfo.AS,
 		LocalAS:      peer.fsm.peerInfo.LocalAS,
 		PeerAddress:  peer.fsm.peerInfo.Address,
-		LocalAddress: net.ParseIP(l),
+		LocalAddress: laddr,
 		PeerID:       peer.fsm.peerInfo.ID,
 		FourBytesAs:  y,
 		Timestamp:    cloned[0].GetTimestamp(),
@@ -988,12 +990,13 @@ func newWatchEventPeer(peer *peer, m *fsmMsg, oldState bgp.FSMState, t apiutil.P
 		}
 	}
 	recvOpen := peer.fsm.recvOpen
+	addr, _ := netip.ParseAddr(laddr)
 	e := &watchEventPeer{
 		Type:          t,
 		PeerAS:        peer.fsm.peerInfo.AS,
 		LocalAS:       peer.fsm.peerInfo.LocalAS,
 		PeerAddress:   peer.fsm.peerInfo.Address,
-		LocalAddress:  net.ParseIP(laddr),
+		LocalAddress:  addr,
 		PeerPort:      rport,
 		LocalPort:     lport,
 		PeerID:        peer.fsm.peerInfo.ID,
@@ -1023,12 +1026,13 @@ func (s *BgpServer) notifyMessageWatcher(peer *peer, timestamp time.Time, msg *b
 	peer.fsm.lock.RLock()
 	_, y := peer.fsm.capMap[bgp.BGP_CAP_FOUR_OCTET_AS_NUMBER]
 	l, _ := peer.fsm.LocalHostPort()
+	laddr, _ := netip.ParseAddr(l)
 	ev := &watchEventMessage{
 		Message:      msg,
 		PeerAS:       peer.fsm.peerInfo.AS,
 		LocalAS:      peer.fsm.peerInfo.LocalAS,
 		PeerAddress:  peer.fsm.peerInfo.Address,
-		LocalAddress: net.ParseIP(l),
+		LocalAddress: laddr,
 		PeerID:       peer.fsm.peerInfo.ID,
 		FourBytesAs:  y,
 		Timestamp:    timestamp,
@@ -1669,14 +1673,14 @@ func (s *BgpServer) handleFSMMessage(peer *peer, e *fsmMsg) {
 			peer.fsm.pConf.Transport.State.LocalAddress = laddr
 			// exclude zone info
 			ipaddr, _ := net.ResolveIPAddr("ip", laddr)
-			peer.fsm.peerInfo.LocalAddress = ipaddr.IP
+			peer.fsm.peerInfo.LocalAddress, _ = netip.AddrFromSlice(ipaddr.IP)
 			if peer.fsm.pConf.Transport.Config.LocalAddress != netip.IPv4Unspecified().String() && peer.fsm.pConf.Transport.Config.LocalAddress != netip.IPv6Unspecified().String() {
 				// Exclude zone info for v6 address like "fe80::1ff:fe23:4567:890a%eth2".
 				p := peer.fsm.pConf.Transport.Config.LocalAddress
 				if i := strings.IndexByte(p, '%'); i != -1 {
 					p = p[:i]
 				}
-				laddr := net.ParseIP(p)
+				laddr, _ := netip.ParseAddr(p)
 
 				peer.fsm.peerInfo.LocalAddress = laddr
 				peer.fsm.pConf.Transport.State.LocalAddress = laddr.String()
@@ -2531,12 +2535,10 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 		return fmt.Errorf("nil request")
 	}
 	return s.mgmtOperation(func() error {
-		g := r.Global
-		if net.ParseIP(g.RouterId) == nil {
-			return fmt.Errorf("invalid router-id format: %s", g.RouterId)
+		c, err := newGlobalFromAPIStruct(r.Global)
+		if err != nil {
+			return err
 		}
-
-		c := newGlobalFromAPIStruct(g)
 		if err := oc.SetDefaultGlobalConfigValues(c); err != nil {
 			return err
 		}
@@ -2544,7 +2546,7 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 		if c.Config.Port > 0 {
 			acceptCh := make(chan net.Conn, 32)
 			for _, addr := range c.Config.LocalAddressList {
-				l, err := netutils.NewTCPListener(s.logger, addr, uint32(c.Config.Port), g.BindToDevice, acceptCh)
+				l, err := netutils.NewTCPListener(s.logger, addr, uint32(c.Config.Port), r.Global.BindToDevice, acceptCh)
 				if err != nil {
 					return err
 				}
@@ -2632,7 +2634,7 @@ func (s *BgpServer) AddVrf(ctx context.Context, r *api.AddVrfRequest) error {
 
 		pi := &table.PeerInfo{
 			AS:      s.bgpConfig.Global.Config.As,
-			LocalID: net.ParseIP(s.bgpConfig.Global.Config.RouterId).To4(),
+			LocalID: s.bgpConfig.Global.Config.RouterId,
 		}
 
 		if pathList, err := s.globalRib.AddVrf(name, id, rd, im, ex, pi); err != nil {
@@ -3140,7 +3142,7 @@ func (s *BgpServer) GetBgp(ctx context.Context, r *api.GetBgpRequest) (rsp *api.
 		rsp = &api.GetBgpResponse{
 			Global: &api.Global{
 				Asn:              g.Config.As,
-				RouterId:         g.Config.RouterId,
+				RouterId:         g.Config.RouterId.String(),
 				ListenPort:       g.Config.Port,
 				ListenAddresses:  g.Config.LocalAddressList,
 				UseMultiplePaths: g.UseMultiplePaths.Config.Enabled,
@@ -4651,9 +4653,9 @@ type watchEventUpdate struct {
 	Message      *bgp.BGPMessage
 	PeerAS       uint32
 	LocalAS      uint32
-	PeerAddress  net.IP
-	LocalAddress net.IP
-	PeerID       net.IP
+	PeerAddress  netip.Addr
+	LocalAddress netip.Addr
+	PeerID       netip.Addr
 	FourBytesAs  bool
 	Timestamp    time.Time
 	Payload      []byte
@@ -4667,11 +4669,11 @@ type watchEventPeer struct {
 	Type          apiutil.PeerEventType
 	PeerAS        uint32
 	LocalAS       uint32
-	PeerAddress   net.IP
-	LocalAddress  net.IP
+	PeerAddress   netip.Addr
+	LocalAddress  netip.Addr
 	PeerPort      uint16
 	LocalPort     uint16
-	PeerID        net.IP
+	PeerID        netip.Addr
 	SentOpen      *bgp.BGPMessage
 	RecvOpen      *bgp.BGPMessage
 	State         bgp.FSMState
@@ -4706,9 +4708,9 @@ type watchEventMessage struct {
 	Message      *bgp.BGPMessage
 	PeerAS       uint32
 	LocalAS      uint32
-	PeerAddress  net.IP
-	LocalAddress net.IP
-	PeerID       net.IP
+	PeerAddress  netip.Addr
+	LocalAddress netip.Addr
+	PeerID       netip.Addr
 	FourBytesAs  bool
 	Timestamp    time.Time
 	IsSent       bool
@@ -5045,11 +5047,12 @@ func (s *BgpServer) watch(opts ...WatchOption) (w *watcher) {
 					peer.fsm.lock.RLock()
 					_, y := peer.fsm.capMap[bgp.BGP_CAP_FOUR_OCTET_AS_NUMBER]
 					l, _ := peer.fsm.LocalHostPort()
+					addr, _ := netip.ParseAddr(l)
 					update := &watchEventUpdate{
 						PeerAS:       peer.fsm.peerInfo.AS,
 						LocalAS:      peer.fsm.peerInfo.LocalAS,
 						PeerAddress:  peer.fsm.peerInfo.Address,
-						LocalAddress: net.ParseIP(l),
+						LocalAddress: addr,
 						PeerID:       peer.fsm.peerInfo.ID,
 						FourBytesAs:  y,
 						Init:         true,
@@ -5063,12 +5066,13 @@ func (s *BgpServer) watch(opts ...WatchOption) (w *watcher) {
 					eor := bgp.NewEndOfRib(rf)
 					eorBuf, _ := eor.Serialize()
 					peer.fsm.lock.RLock()
+					addr, _ = netip.ParseAddr(l)
 					update = &watchEventUpdate{
 						Message:      eor,
 						PeerAS:       peer.fsm.peerInfo.AS,
 						LocalAS:      peer.fsm.peerInfo.LocalAS,
 						PeerAddress:  peer.fsm.peerInfo.Address,
-						LocalAddress: net.ParseIP(l),
+						LocalAddress: addr,
 						PeerID:       peer.fsm.peerInfo.ID,
 						FourBytesAs:  y,
 						Timestamp:    time.Now(),

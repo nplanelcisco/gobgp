@@ -17,7 +17,7 @@ package table
 
 import (
 	_ "fmt"
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -48,9 +48,9 @@ func peerR1() *PeerInfo {
 	peer := &PeerInfo{
 		AS:      65000,
 		LocalAS: 65000,
-		ID:      net.ParseIP("10.0.0.3").To4(),
-		LocalID: net.ParseIP("10.0.0.1").To4(),
-		Address: net.ParseIP("10.0.0.1").To4(),
+		ID:      netip.MustParseAddr("10.0.0.3"),
+		LocalID: netip.MustParseAddr("10.0.0.1"),
+		Address: netip.MustParseAddr("10.0.0.1"),
 	}
 	return peer
 }
@@ -59,7 +59,7 @@ func peerR2() *PeerInfo {
 	peer := &PeerInfo{
 		AS:      65100,
 		LocalAS: 65000,
-		Address: net.ParseIP("10.0.0.2").To4(),
+		Address: netip.MustParseAddr("10.0.0.2"),
 	}
 	return peer
 }
@@ -68,9 +68,9 @@ func peerR3() *PeerInfo {
 	peer := &PeerInfo{
 		AS:      65000,
 		LocalAS: 65000,
-		ID:      net.ParseIP("10.0.0.2").To4(),
-		LocalID: net.ParseIP("10.0.0.1").To4(),
-		Address: net.ParseIP("10.0.0.3").To4(),
+		ID:      netip.MustParseAddr("10.0.0.2"),
+		LocalID: netip.MustParseAddr("10.0.0.1"),
+		Address: netip.MustParseAddr("10.0.0.3"),
 	}
 	return peer
 }
@@ -367,7 +367,7 @@ func TestProcessBGPUpdate_2_select_local_origin_ipv4(t *testing.T) {
 	assert.NoError(t, err)
 
 	peer2 := &PeerInfo{
-		Address: net.ParseIP("0.0.0.0"),
+		Address: netip.MustParseAddr("0.0.0.0"),
 	}
 	pList, err = tm.ProcessUpdate(peer2, bgpMessage2)
 	assert.Equal(t, 1, len(pList))
@@ -447,7 +447,7 @@ func TestProcessBGPUpdate_2_select_local_origin_ipv6(t *testing.T) {
 	assert.NoError(t, err)
 
 	peer2 := &PeerInfo{
-		Address: net.ParseIP("0.0.0.0"),
+		Address: netip.MustParseAddr("0.0.0.0"),
 	}
 
 	pList, err = tm.ProcessUpdate(peer2, bgpMessage2)

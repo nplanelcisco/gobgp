@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	"net"
+	"net/netip"
 	"os"
 	"sync"
 	"testing"
@@ -78,10 +78,10 @@ func TestToPathApi(t *testing.T) {
 			name: "ipv4 path",
 			args: args{
 				path: table.NewPath(&table.PeerInfo{
-					ID:           net.IP{10, 10, 10, 10},
-					LocalID:      net.IP{10, 11, 11, 11},
-					Address:      net.IP{10, 12, 12, 12},
-					LocalAddress: net.IP{10, 13, 13, 13},
+					ID:           netip.AddrFrom4([4]byte{10, 10, 10, 10}),
+					LocalID:      netip.AddrFrom4([4]byte{10, 11, 11, 11}),
+					Address:      netip.AddrFrom4([4]byte{10, 12, 12, 12}),
+					LocalAddress: netip.AddrFrom4([4]byte{10, 13, 13, 13}),
 				},
 					bgp.NewIPAddrPrefix(8, "10.0.0.0"),
 					false,
@@ -150,10 +150,10 @@ func TestToPathApi(t *testing.T) {
 func eor(f bgp.Family) *table.Path {
 	p := table.NewEOR(f)
 	p.SetSource(&table.PeerInfo{
-		ID:           net.IP{10, 10, 10, 10},
-		LocalID:      net.IP{10, 11, 11, 11},
-		Address:      net.IP{10, 12, 12, 12},
-		LocalAddress: net.IP{10, 13, 13, 13},
+		ID:           netip.AddrFrom4([4]byte{10, 10, 10, 10}),
+		LocalID:      netip.AddrFrom4([4]byte{10, 11, 11, 11}),
+		Address:      netip.AddrFrom4([4]byte{10, 12, 12, 12}),
+		LocalAddress: netip.AddrFrom4([4]byte{10, 13, 13, 13}),
 	})
 	return p
 }

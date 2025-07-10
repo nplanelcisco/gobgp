@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -352,12 +353,12 @@ func TestBadBGPIdentifier(t *testing.T) {
 	body2 := msg2.Body.(*bgp.BGPOpen)
 
 	// Test if Bad BGP Identifier notification is sent if remote router-id is 0.0.0.0.
-	peerAs, err := bgp.ValidateOpenMsg(body1, 65000, 65001, net.ParseIP("192.168.1.1"))
+	peerAs, err := bgp.ValidateOpenMsg(body1, 65000, 65001, netip.MustParseAddr("192.168.1.1"))
 	assert.Equal(int(peerAs), 0)
 	assert.Equal(uint8(bgp.BGP_ERROR_SUB_BAD_BGP_IDENTIFIER), err.(*bgp.MessageError).SubTypeCode)
 
 	// Test if Bad BGP Identifier notification is sent if remote router-id is the same for iBGP.
-	peerAs, err = bgp.ValidateOpenMsg(body2, 65000, 65000, net.ParseIP("192.168.1.1"))
+	peerAs, err = bgp.ValidateOpenMsg(body2, 65000, 65000, netip.MustParseAddr("192.168.1.1"))
 	assert.Equal(int(peerAs), 0)
 	assert.Equal(uint8(bgp.BGP_ERROR_SUB_BAD_BGP_IDENTIFIER), err.(*bgp.MessageError).SubTypeCode)
 }
@@ -398,17 +399,20 @@ func open() *bgp.BGPMessage {
 			[]*bgp.CapGracefulRestartTuple{g})})
 	p4 := bgp.NewOptionParameterCapability(
 		[]bgp.ParameterCapabilityInterface{bgp.NewCapFourOctetASNumber(100000)})
-	return bgp.NewBGPOpenMessage(11033, 303, "100.4.10.3",
+	id, _ := netip.ParseAddr("100.4.10.3")
+	return bgp.NewBGPOpenMessage(11033, 303, id,
 		[]bgp.OptionParameterInterface{p1, p2, p3, p4})
 }
 
 func openWithBadBGPIdentifier_Zero() *bgp.BGPMessage {
-	return bgp.NewBGPOpenMessage(65000, 303, "0.0.0.0",
+	id, _ := netip.ParseAddr("0.0.0.0")
+	return bgp.NewBGPOpenMessage(65000, 303, id,
 		[]bgp.OptionParameterInterface{})
 }
 
 func openWithBadBGPIdentifier_Same() *bgp.BGPMessage {
-	return bgp.NewBGPOpenMessage(65000, 303, "192.168.1.1",
+	id, _ := netip.ParseAddr("192.168.1.1")
+	return bgp.NewBGPOpenMessage(65000, 303, id,
 		[]bgp.OptionParameterInterface{})
 }
 

@@ -16,11 +16,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -579,7 +580,7 @@ func getPathAttributeString(nlri bgp.AddrPrefixInterface, attrs []bgp.PathAttrib
 			s = append(s, fmt.Sprintf("[ESI: %s]", route.ESI.String()))
 		case *bgp.EVPNIPPrefixRoute:
 			s = append(s, fmt.Sprintf("[ESI: %s]", route.ESI.String()))
-			if route.GWIPAddress != nil {
+			if route.GWIPAddress.IsValid() {
 				s = append(s, fmt.Sprintf("[GW: %s]", route.GWIPAddress.String()))
 			}
 		}
@@ -625,7 +626,7 @@ func makeShowRouteArgs(p *api.Path, idx int, now time.Time, showAge, showBest, s
 	attrs, _ := apiutil.GetNativePathAttributes(p)
 	// Next Hop
 	nexthop := "fictitious"
-	if n := getNextHopFromPathAttributes(attrs); n != nil {
+	if n := getNextHopFromPathAttributes(attrs); n.IsValid() {
 		nexthop = n.String()
 	}
 	args = append(args, nexthop)
@@ -795,7 +796,11 @@ func showValidationInfo(p *api.Path, shownAs map[uint32]struct{}) error {
 }
 
 func showRibInfo(r, name string) error {
-	def := addr2AddressFamily(net.ParseIP(name))
+	addr, err := netip.ParseAddr(name)
+	if err != nil {
+		return fmt.Errorf("invalid address: %s", name)
+	}
+	def := addr2AddressFamily(addr)
 	if r == cmdGlobal || r == cmdVRF {
 		def = ipv4UC
 	}
@@ -838,16 +843,17 @@ func showRibInfo(r, name string) error {
 	return nil
 }
 
-func parseCIDRorIP(str string) (net.IP, *net.IPNet, error) {
-	ip, n, err := net.ParseCIDR(str)
-	if err == nil {
-		return ip, n, nil
+func parseCIDRorIP(str string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(str)
+	if err == nil && prefix.IsValid() {
+		return prefix, nil
 	}
-	ip = net.ParseIP(str)
-	if ip == nil {
-		return ip, nil, fmt.Errorf("invalid CIDR/IP")
+	addr, err := netip.ParseAddr(str)
+	if err != nil || !addr.IsValid() {
+		return netip.Prefix{}, fmt.Errorf("invalid CIDR or IP address: %s", str)
 	}
-	return ip, nil, nil
+	prefix = netip.PrefixFrom(addr, addr.BitLen())
+	return prefix, nil
 }
 
 func showNeighborRib(r string, name string, args []string) error {
@@ -860,7 +866,11 @@ func showNeighborRib(r string, name string, args []string) error {
 	validationTarget := ""
 	rd := ""
 
-	def := addr2AddressFamily(net.ParseIP(name))
+	addr, err := netip.ParseAddr(name)
+	if err != nil {
+		return fmt.Errorf("invalid address: %s", name)
+	}
+	def := addr2AddressFamily(addr)
 	switch r {
 	case cmdGlobal:
 		def = ipv4UC
@@ -897,7 +907,7 @@ func showNeighborRib(r string, name string, args []string) error {
 				showMUP = true
 			}
 		default:
-			if _, _, err = parseCIDRorIP(target); err != nil {
+			if _, err = parseCIDRorIP(target); err != nil {
 				return err
 			}
 		}
@@ -1042,7 +1052,7 @@ func showNeighborRib(r string, name string, args []string) error {
 		switch rf {
 		case bgp.RF_IPv4_UC, bgp.RF_IPv6_UC:
 			type d struct {
-				prefix net.IP
+				prefix netip.Prefix
 				dst    *api.Destination
 			}
 			l := make([]*d, 0, len(rib))
@@ -1053,12 +1063,18 @@ func showNeighborRib(r string, name string, args []string) error {
 					s := strings.SplitN(prefix, ":", 3)
 					prefix = s[len(s)-1]
 				}
-				_, p, _ := net.ParseCIDR(prefix)
-				l = append(l, &d{prefix: p.IP, dst: dst})
+				p, err := netip.ParsePrefix(prefix)
+				if err != nil || !p.IsValid() {
+					continue
+				}
+				l = append(l, &d{prefix: p, dst: dst})
 			}
 
-			sort.Slice(l, func(i, j int) bool {
-				return bytes.Compare(l[i].prefix, l[j].prefix) < 0
+			slices.SortFunc(l, func(i, j *d) int {
+				if n := i.prefix.Addr().Compare(j.prefix.Addr()); n != 0 {
+					return n
+				}
+				return i.prefix.Bits() - j.prefix.Bits()
 			})
 
 			dsts = make([]*api.Destination, 0, len(rib))

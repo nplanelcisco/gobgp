@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -100,9 +100,11 @@ func (s *SRPolicyNLRI) String() string {
 	var endp string
 	switch s.rf.Afi() {
 	case AFI_IP:
-		endp = net.IP(s.Endpoint).To4().String()
+		addr, _ := netip.AddrFromSlice(s.Endpoint)
+		endp = addr.String()
 	case AFI_IP6:
-		endp = net.IP(s.Endpoint).To16().String()
+		addr, _ := netip.AddrFromSlice(s.Endpoint)
+		endp = addr.String()
 	default:
 		endp = "[" + string(s.Endpoint) + "]"
 	}
@@ -411,7 +413,8 @@ func (b *BSID) String() string {
 		bsid >>= 12
 		return strconv.Itoa(int(bsid))
 	case 16:
-		return net.IP(b.Value).To16().String()
+		addr, _ := netip.AddrFromSlice(b.Value)
+		return addr.String()
 	default:
 		return "invalid"
 	}
@@ -792,17 +795,19 @@ func (s *SegmentTypeB) Serialize() ([]byte, error) {
 }
 
 func (s *SegmentTypeB) String() string {
+	addr, _ := netip.AddrFromSlice(s.SID)
 	if s.SRv6EBS == nil {
 		return fmt.Sprintf("{V-flag: %t, A-flag:, %t S-flag: %t, B-flag: %t, Sid: %s}",
-			s.Flags&0x80 == 0x80, s.Flags&0x40 == 0x40, s.Flags&0x20 == 0x20, s.Flags&0x10 == 0x10, net.IP(s.SID).To16().String())
+			s.Flags&0x80 == 0x80, s.Flags&0x40 == 0x40, s.Flags&0x20 == 0x20, s.Flags&0x10 == 0x10, addr.String())
 	} else {
 		return fmt.Sprintf("{V-flag: %t, A-flag:, %t S-flag: %t, B-flag: %t, Sid: %s, Ebs: %s}",
-			s.Flags&0x80 == 0x80, s.Flags&0x40 == 0x40, s.Flags&0x20 == 0x20, s.Flags&0x10 == 0x10, net.IP(s.SID).To16().String(),
+			s.Flags&0x80 == 0x80, s.Flags&0x40 == 0x40, s.Flags&0x20 == 0x20, s.Flags&0x10 == 0x10, addr.String(),
 			s.SRv6EBS.String())
 	}
 }
 
 func (s *SegmentTypeB) MarshalJSON() ([]byte, error) {
+	addr, _ := netip.AddrFromSlice(s.SID)
 	return json.Marshal(struct {
 		Type    EncapSubTLVType                `json:"type"`
 		VFlag   bool                           `json:"v_flag"`
@@ -817,7 +822,7 @@ func (s *SegmentTypeB) MarshalJSON() ([]byte, error) {
 		AFlag:   s.Flags&0x40 == 0x40,
 		SFlag:   s.Flags&0x20 == 0x20,
 		BFlag:   s.Flags&0x10 == 0x10,
-		Sid:     net.IP(s.SID).To16().String(),
+		Sid:     addr.String(),
 		SRv6EBS: s.SRv6EBS,
 	})
 }

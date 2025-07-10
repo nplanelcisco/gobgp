@@ -1102,7 +1102,7 @@ func (h *fsmHandler) recvMessageWithError() (*fsmMsg, error) {
 				// with the neighbour is both dialed and received on loopback
 				// addresses.
 				var allowLoopback bool
-				if localAddr, peerAddr := h.fsm.peerInfo.LocalAddress, h.fsm.peerInfo.Address; localAddr.To4() != nil && peerAddr.To4() != nil {
+				if localAddr, peerAddr := h.fsm.peerInfo.LocalAddress, h.fsm.peerInfo.Address; localAddr.Is4() && peerAddr.Is4() {
 					allowLoopback = localAddr.IsLoopback() && peerAddr.IsLoopback()
 				}
 				ok, err := bgp.ValidateUpdateMsg(body, rfMap, isEBGP, isConfed, allowLoopback)
@@ -1351,7 +1351,7 @@ func (h *fsmHandler) opensent(ctx context.Context) (bgp.FSMState, *fsmStateReaso
 					fsm.lock.RLock()
 					fsmPeerAS := fsm.pConf.Config.PeerAs
 					fsm.lock.RUnlock()
-					peerAs, err := bgp.ValidateOpenMsg(body, fsmPeerAS, fsm.peerInfo.LocalAS, net.ParseIP(fsm.gConf.Config.RouterId))
+					peerAs, err := bgp.ValidateOpenMsg(body, fsmPeerAS, fsm.peerInfo.LocalAS, fsm.gConf.Config.RouterId)
 					if err != nil {
 						m, _ := fsm.sendNotificationFromErrorMsg(err.(*bgp.MessageError))
 						return bgp.BGP_FSM_IDLE, newfsmStateReason(fsmInvalidMsg, m, nil)

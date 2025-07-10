@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -117,14 +118,11 @@ func showRPKITable(args []string) error {
 		if len(args) > 0 && args[0] != r.Conf.Address {
 			continue
 		}
-		bits := net.IPv4len * 8
-		if family.Afi == api.Family_AFI_IP6 {
-			bits = net.IPv6len * 8
+		addr, err := netip.ParseAddr(r.GetPrefix())
+		if err != nil {
+			exitWithError(fmt.Errorf("invalid prefix: %s", r.GetPrefix()))
 		}
-		n := net.IPNet{
-			IP:   net.ParseIP(r.GetPrefix()),
-			Mask: net.CIDRMask(int(r.GetPrefixlen()), bits),
-		}
+		n := netip.PrefixFrom(addr, addr.BitLen())
 		fmt.Printf(format, n.String(), fmt.Sprint(r.Maxlen), fmt.Sprint(r.Asn), net.JoinHostPort(r.Conf.Address, strconv.Itoa(int(r.Conf.RemotePort))))
 	}
 	return nil
@@ -146,11 +144,10 @@ func newRPKICmd() *cobra.Command {
 			} else if len(args) != 2 {
 				exitWithError(fmt.Errorf("usage: gobgp rpki server <ip address> [reset|softreset|enable]"))
 			}
-			addr := net.ParseIP(args[0])
-			if addr == nil {
+			addr, err := netip.ParseAddr(args[0])
+			if err != nil || !addr.IsValid() {
 				exitWithError(fmt.Errorf("invalid ip address: %s", args[0]))
 			}
-			var err error
 			switch args[1] {
 			case "add":
 				_, err = client.AddRpki(ctx, &api.AddRpkiRequest{

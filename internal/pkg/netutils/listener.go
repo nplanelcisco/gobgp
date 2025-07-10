@@ -68,7 +68,6 @@ type TCPListener struct {
 
 func listenControl(logger log.Logger, bindToDev string) func(network, address string, c syscall.RawConn) error {
 	return func(network, address string, c syscall.RawConn) error {
-		family := extractFamilyFromAddress(address)
 		if bindToDev != "" {
 			if err := SetBindToDevSockopt(c, bindToDev); err != nil {
 				logger.Warn("failed to bind Listener to device ",
@@ -81,6 +80,16 @@ func listenControl(logger log.Logger, bindToDev string) func(network, address st
 				return err
 			}
 		}
+		family, err := extractFamilyFromAddress(address)
+		if err != nil {
+			logger.Warn("failed to extract family from address",
+				log.Fields{
+					"Topic": "Peer",
+					"Key":   address,
+					"Error": err,
+				})
+			return err
+		}
 		// Note: Set TTL=255 for incoming connection listener in order to accept
 		// connection in case for the neighbor has TTL Security settings.
 		if err := setSockOptIpTtl(c, family, 255); err != nil {
@@ -88,7 +97,7 @@ func listenControl(logger log.Logger, bindToDev string) func(network, address st
 				log.Fields{
 					"Topic": "Peer",
 					"Key":   address,
-					"Err":   err,
+					"Error": err,
 				})
 		}
 		return nil
@@ -145,7 +154,11 @@ func (l *TCPListener) acceptLoop() {
 
 // avoid mapped IPv6 address
 func NewTCPListener(logger log.Logger, address string, port uint32, bindToDev string, connChan chan net.Conn) (*TCPListener, error) {
-	proto := extractProtoFromAddress(address)
+	proto, err := extractProtoFromAddress(address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract protocol from address %s: %w", address, err)
+	}
+
 	config := net.ListenConfig{
 		Control: listenControl(logger, bindToDev),
 	}

@@ -18,6 +18,7 @@ package server
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"time"
 
@@ -144,14 +145,14 @@ func (peer *peer) ID() string {
 	return peer.fsm.pConf.State.NeighborAddress
 }
 
-func (peer *peer) routerID() net.IP {
+func (peer *peer) routerID() netip.Addr {
 	peer.fsm.lock.RLock()
 	defer peer.fsm.lock.RUnlock()
 	return peer.fsm.peerInfo.ID
 }
 
 func (peer *peer) RouterID() string {
-	if id := peer.routerID(); id != nil {
+	if id := peer.routerID(); id.IsValid() && id.Is4() {
 		return id.String()
 	}
 	return ""
@@ -465,7 +466,7 @@ func (peer *peer) filterPathFromSourcePeer(path, old *table.Path) *table.Path {
 	// (whichever is not the new best path), we fail to send a withdraw towards
 	// B, and the route is "stuck".
 	// TODO: considerations for RFC6286
-	if !peer.routerID().Equal(path.GetSource().ID) {
+	if peer.routerID().Compare(path.GetSource().ID) != 0 {
 		return path
 	}
 
@@ -622,7 +623,7 @@ func (peer *peer) handleUpdate(e *fsmMsg) ([]*table.Path, []bgp.Family, *bgp.BGP
 			routerId := peer.fsm.gConf.Config.RouterId
 			peer.fsm.lock.RUnlock()
 			if isIBGPPeer {
-				if id := path.GetOriginatorID(); routerId == id.String() {
+				if id := path.GetOriginatorID(); routerId == id {
 					peer.fsm.logger.Debug("Originator ID is mine, ignore",
 						log.Fields{
 							"Topic":        "Peer",

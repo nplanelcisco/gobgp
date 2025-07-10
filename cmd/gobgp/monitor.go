@@ -19,7 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -50,7 +50,7 @@ func makeMonitorRouteArgs(p *api.Path, showIdentifier bgp.BGPAddPathMode) []any 
 	attrs, _ := apiutil.GetNativePathAttributes(p)
 	// Next Hop
 	nexthop := "fictitious"
-	if n := getNextHopFromPathAttributes(attrs); n != nil {
+	if n := getNextHopFromPathAttributes(attrs); n.IsValid() {
 		nexthop = n.String()
 	}
 	pathStr = append(pathStr, nexthop)
@@ -192,8 +192,8 @@ func newMonitorCmd() *cobra.Command {
 		Use: cmdAdjIn,
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) > 0 {
-				remoteIP := net.ParseIP(args[0])
-				if remoteIP == nil {
+				remoteIP, err := netip.ParseAddr(args[0])
+				if err != nil || !remoteIP.IsValid() {
 					exitWithError(fmt.Errorf("invalid ip address: %s", args[0]))
 				}
 			}

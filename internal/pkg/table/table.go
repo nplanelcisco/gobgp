@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"math/bits"
 	"net"
-	"strconv"
+	"net/netip"
 	"strings"
 
 	"github.com/k-sone/critbitgo"
@@ -52,21 +52,21 @@ func tableKey(nlri bgp.AddrPrefixInterface) addrPrefixKey {
 	h := fnv1a.Init64
 	switch T := nlri.(type) {
 	case *bgp.IPAddrPrefix:
-		h = fnv1a.AddBytes64(h, T.Prefix.To4())
-		h = fnv1a.AddBytes64(h, []byte{T.Length})
+		h = fnv1a.AddBytes64(h, T.Prefix.Addr().AsSlice())
+		h = fnv1a.AddBytes64(h, []byte{byte(T.Prefix.Bits())})
 	case *bgp.IPv6AddrPrefix:
-		h = fnv1a.AddBytes64(h, T.Prefix.To16())
-		h = fnv1a.AddBytes64(h, []byte{T.Length})
+		h = fnv1a.AddBytes64(h, T.Prefix.Addr().AsSlice())
+		h = fnv1a.AddBytes64(h, []byte{byte(T.Prefix.Bits())})
 	case *bgp.LabeledVPNIPAddrPrefix:
 		serializedRD, _ := T.RD.Serialize()
 		h = fnv1a.AddBytes64(h, serializedRD)
-		h = fnv1a.AddBytes64(h, T.Prefix.To4())
-		h = fnv1a.AddBytes64(h, []byte{T.Length - 8*uint8(T.Labels.Len())})
+		h = fnv1a.AddBytes64(h, T.Prefix.Addr().AsSlice())
+		h = fnv1a.AddBytes64(h, []byte{byte(T.Prefix.Bits())})
 	case *bgp.LabeledVPNIPv6AddrPrefix:
 		serializedRD, _ := T.RD.Serialize()
 		h = fnv1a.AddBytes64(h, serializedRD)
-		h = fnv1a.AddBytes64(h, T.Prefix.To16())
-		h = fnv1a.AddBytes64(h, []byte{T.Length - 8*uint8(T.Labels.Len())})
+		h = fnv1a.AddBytes64(h, T.Prefix.Addr().AsSlice())
+		h = fnv1a.AddBytes64(h, []byte{byte(T.Prefix.Bits())})
 	default:
 		h = fnv1a.AddString64(h, nlri.String())
 	}
@@ -368,44 +368,30 @@ func (t *Table) GetLongerPrefixDestinations(key string) ([]*Destination, error) 
 	results := make([]*Destination, 0, len(t.GetDestinations()))
 	switch t.Family {
 	case bgp.RF_IPv4_UC, bgp.RF_IPv6_UC, bgp.RF_IPv4_MPLS, bgp.RF_IPv6_MPLS:
-		_, prefix, err := net.ParseCIDR(key)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing cidr %s: %v", key, err)
+		prefix, err := netip.ParsePrefix(key)
+		if err != nil || !prefix.IsValid() {
+			return nil, fmt.Errorf("error parsing prefix %s: %v", key, err)
 		}
-		ones, bits := prefix.Mask.Size()
+		prefix = prefix.Masked()
 
 		r := critbitgo.NewNet()
 		for _, dst := range t.GetDestinations() {
 			_ = r.Add(nlriToIPNet(dst.nlri), dst)
 		}
-		p := &net.IPNet{
-			IP:   prefix.IP,
-			Mask: net.CIDRMask(ones>>3<<3, bits),
-		}
-		mask := 0
-		div := 0
-		if ones%8 != 0 {
-			mask = 8 - ones&0x7
-			div = ones >> 3
-		}
-		r.WalkPrefix(p, func(n *net.IPNet, v any) bool {
-			if mask != 0 && n.IP[div]>>mask != p.IP[div]>>mask {
-				return true
-			}
-			l, _ := n.Mask.Size()
 
-			if ones > l {
+		r.WalkPrefix(&prefix, func(n *netip.Prefix, v any) bool {
+			if prefix.Overlaps(*n) {
 				return true
 			}
 			results = append(results, v.(*Destination))
 			return true
 		})
 	case bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
-		prefixRd, _, network, err := bgp.ParseVPNPrefix(key)
+		prefixRd, prefix, _, err := bgp.ParseVPNPrefix(key)
 		if err != nil {
 			return nil, err
 		}
-		ones, bits := network.Mask.Size()
+		prefix = prefix.Masked()
 
 		r := critbitgo.NewNet()
 		for _, dst := range t.GetDestinations() {
@@ -424,25 +410,8 @@ func (t *Table) GetLongerPrefixDestinations(key string) ([]*Destination, error) 
 			_ = r.Add(nlriToIPNet(dst.nlri), dst)
 		}
 
-		p := &net.IPNet{
-			IP:   network.IP,
-			Mask: net.CIDRMask(ones>>3<<3, bits),
-		}
-
-		mask := 0
-		div := 0
-		if ones%8 != 0 {
-			mask = 8 - ones&0x7
-			div = ones >> 3
-		}
-
-		r.WalkPrefix(p, func(n *net.IPNet, v any) bool {
-			if mask != 0 && n.IP[div]>>mask != p.IP[div]>>mask {
-				return true
-			}
-			l, _ := n.Mask.Size()
-
-			if ones > l {
+		r.WalkPrefix(&prefix, func(n *netip.Prefix, v any) bool {
+			if prefix.Overlaps(*n) {
 				return true
 			}
 			results = append(results, v.(*Destination))
@@ -661,7 +630,8 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 						}
 					}
 				default:
-					if host := net.ParseIP(key); host != nil {
+					p, err := netip.ParsePrefix(key)
+					if err == nil && p.IsValid() {
 						masklen := 32
 						if t.Family == bgp.RF_IPv6_UC {
 							masklen = 128
@@ -709,7 +679,7 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 			for _, p := range prefixes {
 				switch p.LookupOption {
 				case apiutil.LOOKUP_LONGER:
-					_, prefix, err := net.ParseCIDR(p.Prefix)
+					prefix, err := netip.ParsePrefix(p.Prefix)
 					if err != nil {
 						return nil, err
 					}
@@ -717,8 +687,7 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 					if p.RD == "" {
 						for _, dst := range t.GetDestinations() {
 							tablePrefix := nlriToIPNet(dst.nlri)
-
-							if bgp.ContainsCIDR(prefix, tablePrefix) {
+							if tablePrefix.Overlaps(prefix) {
 								r.setDestination(dst)
 							}
 						}
@@ -737,7 +706,7 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 						}
 					}
 				case apiutil.LOOKUP_SHORTER:
-					addr, prefix, err := net.ParseCIDR(p.Prefix)
+					prefix, err := netip.ParsePrefix(p.Prefix)
 					if err != nil {
 						return nil, err
 					}
@@ -746,7 +715,7 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 						for _, dst := range t.GetDestinations() {
 							tablePrefix := nlriToIPNet(dst.nlri)
 
-							if bgp.ContainsCIDR(tablePrefix, prefix) {
+							if bgp.ContainsCIDR(tablePrefix, &prefix) {
 								r.setDestination(dst)
 							}
 						}
@@ -759,9 +728,9 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 						return nil, err
 					}
 
-					ones, _ := prefix.Mask.Size()
+					ones := prefix.Bits()
 					for i := ones; i >= 0; i-- {
-						_, prefix, _ := net.ParseCIDR(addr.String() + "/" + strconv.Itoa(i))
+						prefix := netip.PrefixFrom(prefix.Addr(), i)
 
 						err := f(rd.String() + ":" + prefix.String())
 						if err != nil {

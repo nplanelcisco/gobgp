@@ -260,7 +260,7 @@ func (m *roaManager) handleRTRMsg(client *roaClient, state *oc.RpkiServerState, 
 				family = bgp.AFI_IP6
 				received.Ipv6Prefix++
 			}
-			roa := table.NewROA(family, msg.Prefix, msg.PrefixLen, msg.MaxLen, msg.AS, client.host)
+			roa := table.NewROA(family, msg.Prefix.Addr().AsSlice(), uint8(msg.Prefix.Bits()), msg.MaxLen, msg.AS, client.host)
 			if msg.Flags&1 == 1 {
 				if client.endOfData {
 					m.table.Add(roa)

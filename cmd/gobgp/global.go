@@ -697,13 +697,16 @@ func parseEvpnMacAdvArgs(args []string) (bgp.AddrPrefixInterface, []string, erro
 		return nil, nil, fmt.Errorf("invalid mac address: %s", macStr)
 	}
 
-	ip := net.ParseIP(ipStr)
+	ip, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid ip address: %s", ipStr)
+	}
 	ipLen := 0
-	if ip == nil {
+	if !ip.IsValid() {
 		return nil, nil, fmt.Errorf("invalid ip address: %s", ipStr)
 	} else if ip.IsUnspecified() {
-		ip = nil
-	} else if ip.To4() != nil {
+		ip = netip.Addr{} // nil is not allowed in EVPN NLRI
+	} else if ip.Is4() {
 		ipLen = net.IPv4len * 8
 	} else {
 		ipLen = net.IPv6len * 8
@@ -802,13 +805,16 @@ func parseEvpnMulticastArgs(args []string) (bgp.AddrPrefixInterface, []string, e
 		return nil, nil, fmt.Errorf("specify rd")
 	}
 
-	ip := net.ParseIP(ipStr)
+	ip, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid ip address: %s", ipStr)
+	}
 	ipLen := 0
-	if ip == nil {
+	if !ip.IsValid() {
 		return nil, nil, fmt.Errorf("invalid ip address: %s", ipStr)
 	} else if ip.IsUnspecified() {
-		ip = nil
-	} else if ip.To4() != nil {
+		ip = netip.Addr{}
+	} else if ip.Is4() {
 		ipLen = net.IPv4len * 8
 	} else {
 		ipLen = net.IPv6len * 8
@@ -867,13 +873,16 @@ func parseEvpnEthernetSegmentArgs(args []string) (bgp.AddrPrefixInterface, []str
 		}
 	}
 
-	ip := net.ParseIP(m[""][0])
+	ip, err := netip.ParseAddr(m[""][0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid ip address: %s", m[""][0])
+	}
 	ipLen := 0
-	if ip == nil {
+	if !ip.IsValid() {
 		return nil, nil, fmt.Errorf("invalid ip address: %s", m[""][0])
 	} else if ip.IsUnspecified() {
-		ip = nil
-	} else if ip.To4() != nil {
+		ip = netip.Addr{}
+	} else if ip.Is4() {
 		ipLen = net.IPv4len * 8
 	} else {
 		ipLen = net.IPv6len * 8
@@ -936,15 +945,17 @@ func parseEvpnIPPrefixArgs(args []string) (bgp.AddrPrefixInterface, []string, er
 		}
 	}
 
-	_, nw, err := net.ParseCIDR(m[""][0])
+	nw, err := netip.ParsePrefix(m[""][0])
 	if err != nil {
 		return nil, nil, err
 	}
-	ones, _ := nw.Mask.Size()
 
-	var gw net.IP
+	var gw netip.Addr
 	if len(m["gw"]) > 0 {
-		gw = net.ParseIP(m["gw"][0])
+		gw, err = netip.ParseAddr(m["gw"][0])
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid gateway address: %s", m["gw"][0])
+		}
 	}
 
 	rd, err := bgp.ParseRouteDistinguisher(m["rd"][0])
@@ -985,13 +996,12 @@ func parseEvpnIPPrefixArgs(args []string) (bgp.AddrPrefixInterface, []string, er
 	}
 
 	r := &bgp.EVPNIPPrefixRoute{
-		RD:             rd,
-		ESI:            esi,
-		ETag:           etag,
-		IPPrefixLength: uint8(ones),
-		IPPrefix:       nw.IP,
-		GWIPAddress:    gw,
-		Label:          label,
+		RD:          rd,
+		ESI:         esi,
+		ETag:        etag,
+		IPPrefix:    nw,
+		GWIPAddress: gw,
+		Label:       label,
 	}
 	return bgp.NewEVPNNLRI(bgp.EVPN_IP_PREFIX, r), extcomms, nil
 }
@@ -1475,13 +1485,17 @@ func parseLsLinkNLRIType(args []string) (bgp.AddrPrefixInterface, *bgp.PathAttri
 	if err != nil {
 		return nil, nil, err
 	}
+	addr, err := netip.ParseAddr(m["local-bgp-router-id"][0])
+	if err != nil || !addr.Is4() {
+		return nil, nil, fmt.Errorf("invalid local BGP router ID: %s", m["local-bgp-router-id"][0])
+	}
 	lnd := &bgp.LsNodeDescriptor{
 		Asn:                    uint32(localAsn),
 		BGPLsID:                uint32(localBgpLsId),
 		OspfAreaID:             0,
 		PseudoNode:             false,
 		IGPRouterID:            "",
-		BGPRouterID:            net.ParseIP(m["local-bgp-router-id"][0]).To4(),
+		BGPRouterID:            addr,
 		BGPConfederationMember: uint32(localBgpConfederationMember),
 	}
 	RemoteAsn, err := strconv.ParseUint(m["remote-asn"][0], 10, 64)
@@ -1496,26 +1510,41 @@ func parseLsLinkNLRIType(args []string) (bgp.AddrPrefixInterface, *bgp.PathAttri
 	if err != nil {
 		return nil, nil, err
 	}
+	addr, err = netip.ParseAddr(m["remote-bgp-router-id"][0])
+	if err != nil || !addr.Is4() {
+		return nil, nil, fmt.Errorf("invalid local BGP router ID: %s", m["local-bgp-router-id"][0])
+	}
 	rnd := &bgp.LsNodeDescriptor{
 		Asn:                    uint32(RemoteAsn),
 		BGPLsID:                uint32(RemoteBgpLsId),
 		OspfAreaID:             0,
 		PseudoNode:             false,
 		IGPRouterID:            "",
-		BGPRouterID:            net.ParseIP(m["remote-bgp-router-id"][0]),
+		BGPRouterID:            addr,
 		BGPConfederationMember: uint32(RemoteBgpConfederationMember),
 	}
 
-	var interfaceAddrIPv4 net.IP
-	var neighborAddrIPv4 net.IP
-	var interfaceAddrIPv6 net.IP
-	var neighborAddrIPv6 net.IP
+	var interfaceAddrIPv4 netip.Addr
+	var neighborAddrIPv4 netip.Addr
+	var interfaceAddrIPv6 netip.Addr
+	var neighborAddrIPv6 netip.Addr
 
-	interfaceAddrIPv4 = net.ParseIP(m["ipv4-interface-address"][0]).To4()
-	neighborAddrIPv4 = net.ParseIP(m["ipv4-neighbor-address"][0]).To4()
-	interfaceAddrIPv6 = net.ParseIP(m["ipv6-interface-address"][0]).To16()
-	neighborAddrIPv6 = net.ParseIP(m["ipv6-neighbor-address"][0]).To16()
-
+	interfaceAddrIPv4, err = netip.ParseAddr(m["ipv4-interface-address"][0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid IPv4 interface address: %s", m["ipv4-interface-address"][0])
+	}
+	neighborAddrIPv4, err = netip.ParseAddr(m["ipv4-neighbor-address"][0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid IPv4 neighbor address: %s", m["ipv4-neighbor-address"][0])
+	}
+	interfaceAddrIPv6, err = netip.ParseAddr(m["ipv6-interface-address"][0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid IPv6 interface address: %s", m["ipv6-interface-address"][0])
+	}
+	neighborAddrIPv6, err = netip.ParseAddr(m["ipv6-neighbor-address"][0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("invalid IPv6 neighbor address: %s", m["ipv6-neighbor-address"][0])
+	}
 	ld := &bgp.LsLinkDescriptor{
 		LinkLocalID:       new(uint32),
 		LinkRemoteID:      new(uint32),
@@ -1674,13 +1703,17 @@ func parseLsSRv6SIDNLRIType(args []string) (bgp.AddrPrefixInterface, *bgp.PathAt
 	if err != nil {
 		return nil, nil, err
 	}
+	addr, err := netip.ParseAddr(m["local-bgp-router-id"][0])
+	if err != nil || !addr.Is4() {
+		return nil, nil, fmt.Errorf("invalid local BGP router ID: %s", m["local-bgp-router-id"][0])
+	}
 	lnd := &bgp.LsNodeDescriptor{
 		Asn:                    uint32(localAsn),
 		BGPLsID:                uint32(localBgpLsId),
 		OspfAreaID:             0,
 		PseudoNode:             false,
 		IGPRouterID:            "",
-		BGPRouterID:            net.ParseIP(m["local-bgp-router-id"][0]).To4(),
+		BGPRouterID:            addr,
 		BGPConfederationMember: uint32(localBgpConfederationMember),
 	}
 	lndTLV := bgp.NewLsTLVNodeDescriptor(lnd, bgp.LS_TLV_LOCAL_NODE_DESC)
@@ -1898,7 +1931,8 @@ func extractNexthop(rf bgp.Family, args []string) ([]string, string, error) {
 	}
 	for idx, arg := range args {
 		if arg == "nexthop" && len(args) > idx+1 {
-			if net.ParseIP(args[idx+1]) == nil {
+			addr, err := netip.ParseAddr(args[idx+1])
+			if err != nil || !addr.IsValid() {
 				return nil, "", fmt.Errorf("invalid nexthop address")
 			}
 			nexthop = args[idx+1]
@@ -2028,7 +2062,11 @@ func extractAggregator(args []string) ([]string, bgp.PathAttributeInterface, err
 			if err != nil {
 				return nil, nil, fmt.Errorf("invalid aggregator format")
 			}
-			attr := bgp.NewPathAttributeAggregator(uint32(as), net.ParseIP(v[1]).String())
+			addr, err := netip.ParseAddr(v[1])
+			if err != nil || !addr.IsValid() {
+				return nil, nil, fmt.Errorf("invalid aggregator address: %s", v[1])
+			}
+			attr := bgp.NewPathAttributeAggregator(uint32(as), addr.String())
 			return append(args[:idx], args[idx+2:]...), attr, nil
 		}
 	}
@@ -2216,7 +2254,11 @@ func parsePath(rf bgp.Family, args []string) (*api.Path, error) {
 		attrs = append(attrs, ls)
 	}
 
-	if rf == bgp.RF_IPv4_UC && net.ParseIP(nexthop).To4() != nil {
+	addr, err := netip.ParseAddr(nexthop)
+	if err != nil || !addr.IsValid() {
+		return nil, fmt.Errorf("invalid nexthop address: %s", nexthop)
+	}
+	if rf == bgp.RF_IPv4_UC && addr.Is4() {
 		attrs = append(attrs, bgp.NewPathAttributeNextHop(nexthop))
 	} else {
 		mpreach := bgp.NewPathAttributeMpReachNLRI(nexthop, nlri)
@@ -2525,8 +2567,11 @@ func modGlobalConfig(args []string) error {
 	if err != nil {
 		return err
 	}
-	id := net.ParseIP(m["router-id"][0])
-	if id.To4() == nil {
+	id, err := netip.ParseAddr(m["router-id"][0])
+	if err != nil || !id.IsValid() {
+		return fmt.Errorf("invalid router-id format: %s", m["router-id"][0])
+	}
+	if !id.Is4() {
 		return fmt.Errorf("invalid router-id format")
 	}
 	var port uint64
