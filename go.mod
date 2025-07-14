@@ -1,5 +1,7 @@
 module github.com/osrg/gobgp/v4
 
+replace github.com/k-sone/critbitgo => github.com/nplanelcisco/critbitgo v0.0.0-20250714124422-2d136920cd74
+
 require (
 	github.com/BurntSushi/toml v1.3.2
 	github.com/coreos/go-systemd/v22 v22.5.0
