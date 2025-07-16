@@ -1394,13 +1394,13 @@ func addrPrefixOnlySerialize(nlri AddrPrefixInterface) []byte {
 		return b
 	case *LabeledVPNIPAddrPrefix:
 		b := T.Prefix.Addr().AsSlice()
-		b = append(b, byte(T.Prefix.Bits())-8*uint8(T.Labels.Len()))
+		b = append(b, byte(T.Prefix.Bits()))
 		serializedRD, _ := T.RD.Serialize()
 		b = append(b, serializedRD...)
 		return b
 	case *LabeledVPNIPv6AddrPrefix:
 		b := T.Prefix.Addr().AsSlice()
-		b = append(b, byte(T.Prefix.Bits())-8*uint8(T.Labels.Len()))
+		b = append(b, byte(T.Prefix.Bits()))
 		serializedRD, _ := T.RD.Serialize()
 		b = append(b, serializedRD...)
 		return b
@@ -1529,7 +1529,7 @@ func (r *IPAddrPrefixDefault) decodePrefix(data []byte, bitlen uint8, addrlen ui
 
 func (r *IPAddrPrefixDefault) serializePrefix(bitLen uint8) ([]byte, error) {
 	byteLen := (int(r.Prefix.Bits()) + 7) / 8
-	buf := r.Prefix.Addr().AsSlice()
+	buf := r.Prefix.Masked().Addr().AsSlice()
 	buf = buf[:byteLen] // truncate to the correct length
 	return buf, nil
 }
@@ -1902,10 +1902,7 @@ func ParseRouteDistinguisher(rd string) (RouteDistinguisherInterface, error) {
 		return nil, err
 	}
 	assigned, _ := strconv.ParseUint(elems[10], 10, 32)
-	ip, err := netip.ParseAddr(elems[1])
-	if err != nil {
-		return nil, fmt.Errorf("invalid IP address in RD: %s", elems[1])
-	}
+	ip, _ := netip.ParseAddr(elems[1])
 	switch {
 	case ip.Is4():
 		return NewRouteDistinguisherIPAddressAS(elems[1], uint16(assigned)), nil
@@ -2155,7 +2152,7 @@ func (l *LabeledVPNIPAddrPrefix) Serialize(options ...*MarshallingOption) ([]byt
 			return nil, err
 		}
 	}
-	length := byte(l.Prefix.Bits())
+	length := byte(8*(l.Labels.Len()+l.RD.Len()) + l.Prefix.Bits())
 	buf = append(buf, length)
 	lbuf, err := l.Labels.Serialize(options...)
 	if err != nil {
@@ -3371,7 +3368,7 @@ func (er *EVPNIPPrefixRoute) String() string {
 }
 
 func (er *EVPNIPPrefixRoute) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
+	j := struct {
 		RD      RouteDistinguisherInterface `json:"rd"`
 		ESI     string                      `json:"esi"`
 		Etag    uint32                      `json:"etag"`
@@ -3379,13 +3376,16 @@ func (er *EVPNIPPrefixRoute) MarshalJSON() ([]byte, error) {
 		Gateway string                      `json:"gateway"`
 		Label   uint32                      `json:"label"`
 	}{
-		RD:      er.RD,
-		ESI:     er.ESI.String(),
-		Etag:    er.ETag,
-		Prefix:  er.IPPrefix.String(),
-		Gateway: er.GWIPAddress.String(),
-		Label:   er.Label,
-	})
+		RD:     er.RD,
+		ESI:    er.ESI.String(),
+		Etag:   er.ETag,
+		Prefix: er.IPPrefix.String(),
+		Label:  er.Label,
+	}
+	if er.GWIPAddress.IsValid() {
+		j.Gateway = er.GWIPAddress.String()
+	}
+	return json.Marshal(j)
 }
 
 func (er *EVPNIPPrefixRoute) rd() RouteDistinguisherInterface {
@@ -3398,9 +3398,14 @@ func NewEVPNIPPrefixRoute(rd RouteDistinguisherInterface, esi EthernetSegmentIde
 	if !prefix.IsValid() {
 		return nil
 	}
-	gw, _ := netip.ParseAddr(gateway)
-	if !gw.IsValid() {
-		return nil
+	var gw netip.Addr
+	if gateway != "" { // gateway is optional
+		var err error
+		gw, err = netip.ParseAddr(gateway)
+		if err != nil || !gw.IsValid() {
+			fmt.Println("Invalid gateway address:A", gateway, "AError:", err)
+			return nil
+		}
 	}
 	return NewEVPNNLRI(EVPN_IP_PREFIX, &EVPNIPPrefixRoute{
 		RD:          rd,
@@ -10275,16 +10280,13 @@ func NewPrefixFromFamily(family Family, prefixStr ...string) (prefix AddrPrefixI
 			break
 		}
 
-		rd, addr, _, err := ParseVPNPrefix(prefixStr[0])
+		rd, prefx, _, err := ParseVPNPrefix(prefixStr[0])
 		if err != nil {
 			return nil, err
 		}
-
-		length := addr.Bits()
-
 		prefix = NewLabeledVPNIPAddrPrefix(
-			uint8(length),
-			addr.String(),
+			uint8(prefx.Bits()),
+			prefx.Addr().String(),
 			*NewMPLSLabelStack(),
 			rd,
 		)
@@ -12315,10 +12317,7 @@ func ParseExtendedCommunity(subtype ExtendedCommunityAttrSubType, com string) (E
 	if subtype == EC_SUBTYPE_SOURCE_AS {
 		localAdmin = 0
 	}
-	ip, err := netip.ParseAddr(elems[1])
-	if err != nil || !ip.IsValid() {
-		return nil, fmt.Errorf("invalid IP address %s", elems[1])
-	}
+	ip, _ := netip.ParseAddr(elems[1])
 	isTransitive := true
 	switch {
 	case subtype == EC_SUBTYPE_LINK_BANDWIDTH:

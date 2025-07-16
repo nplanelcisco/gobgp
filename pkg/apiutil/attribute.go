@@ -1271,14 +1271,18 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 			if err != nil {
 				return nil, err
 			}
+			gwAddr := ""
+			if r.GWIPAddress.IsValid() {
+				gwAddr = r.GWIPAddress.String()
+			}
 			nlri.Nlri = &api.NLRI_EvpnIpPrefix{EvpnIpPrefix: &api.EVPNIPPrefixRoute{
 				Rd:          rd,
 				Esi:         esi,
 				EthernetTag: r.ETag,
-				IpPrefix:    r.IPPrefix.String(),
+				IpPrefix:    r.IPPrefix.Addr().String(),
 				IpPrefixLen: uint32(r.IPPrefix.Bits()),
 				Label:       r.Label,
-				GwAddress:   r.GWIPAddress.String(),
+				GwAddress:   gwAddr,
 			}}
 		}
 	case *bgp.LabeledVPNIPAddrPrefix:

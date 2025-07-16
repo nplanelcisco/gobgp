@@ -730,7 +730,7 @@ func (t *Table) Select(option ...TableSelectOption) (*Table, error) {
 
 					ones := prefix.Bits()
 					for i := ones; i >= 0; i-- {
-						prefix := netip.PrefixFrom(prefix.Addr(), i)
+						prefix := netip.PrefixFrom(prefix.Masked().Addr(), i)
 
 						err := f(rd.String() + ":" + prefix.String())
 						if err != nil {

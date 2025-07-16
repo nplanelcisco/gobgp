@@ -346,7 +346,7 @@ func (path *Path) setTimestamp(t time.Time) {
 }
 
 func (path *Path) IsLocal() bool {
-	return path.GetSource().Address.IsValid() || path.GetSource().Address.IsUnspecified()
+	return !path.GetSource().Address.IsValid()
 }
 
 func (path *Path) IsIBGP() bool {

@@ -18,6 +18,7 @@ package table
 import (
 	crand "crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"math/rand"
 	"net"
 	"net/netip"
@@ -264,7 +265,9 @@ func TestTableSelectVPNv4(t *testing.T) {
 
 	table := NewTable(logger, bgp.RF_IPv4_VPN)
 	for _, prefix := range prefixes {
-		nlri, _ := bgp.NewPrefixFromFamily(bgp.RF_IPv4_VPN, prefix)
+		nlri, err := bgp.NewPrefixFromFamily(bgp.RF_IPv4_VPN, prefix)
+		assert.NoError(t, err)
+		assert.NotNil(t, nlri, fmt.Sprintf("Failed to parse prefix: %s", prefix))
 
 		destination := NewDestination(nlri, 0, NewPath(nil, nlri, false, nil, time.Now(), false))
 		table.setDestination(destination)
