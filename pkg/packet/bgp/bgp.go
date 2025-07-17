@@ -2234,8 +2234,8 @@ func (l *LabeledVPNIPv6AddrPrefix) AFI() uint16 {
 	return AFI_IP6
 }
 
-func NewLabeledVPNIPv6AddrPrefix(length uint8, prefix string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPv6AddrPrefix {
-	addr, err := netip.ParseAddr(prefix)
+func NewLabeledVPNIPv6AddrPrefix(length uint8, prefixAddr string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPv6AddrPrefix {
+	addr, err := netip.ParseAddr(prefixAddr)
 	if err != nil || !addr.IsValid() {
 		// fixme(nplanel): should return an error or change api
 		return nil
@@ -10305,7 +10305,7 @@ func NewPrefixFromFamily(family Family, prefixStr ...string) (prefix AddrPrefixI
 
 		prefix = NewLabeledVPNIPv6AddrPrefix(
 			uint8(length),
-			addr.String(),
+			addr.Addr().String(),
 			*NewMPLSLabelStack(),
 			rd,
 		)
