@@ -108,7 +108,7 @@ func (lhs *PeerInfo) Equal(rhs *PeerInfo) bool {
 }
 
 func (i *PeerInfo) String() string {
-	if !i.Address.IsValid() || i.Address.IsUnspecified() {
+	if !i.Address.IsValid() {
 		return "local"
 	}
 	s := bytes.NewBuffer(make([]byte, 0, 64))

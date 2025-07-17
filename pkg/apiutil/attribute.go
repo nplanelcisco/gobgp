@@ -38,8 +38,8 @@ func UnmarshalAttribute(attr *api.Attribute) (bgp.PathAttributeInterface, error)
 		return bgp.NewPathAttributeAsPath(params), nil
 	case *api.Attribute_NextHop:
 		nexthop, err := netip.ParseAddr(a.NextHop.NextHop)
-		if err != nil || !nexthop.Is4() || !nexthop.Is6() {
-			return nil, fmt.Errorf("invalid nexthop address: %s", a.NextHop)
+		if err != nil || !nexthop.IsValid() {
+			return nil, fmt.Errorf("invalid nexthop address: %s : %v", a.NextHop.NextHop, err)
 		}
 		return bgp.NewPathAttributeNextHop(a.NextHop.NextHop), nil
 	case *api.Attribute_MultiExitDisc:

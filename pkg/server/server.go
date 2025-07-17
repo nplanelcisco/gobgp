@@ -3373,6 +3373,9 @@ func (s *BgpServer) addNeighbor(c *oc.Neighbor) error {
 	if c.RouteServer.Config.RouteServerClient {
 		rib = s.rsRib
 	}
+	if !s.bgpConfig.Global.Config.RouterId.IsValid() || s.bgpConfig.Global.Config.RouterId.IsUnspecified() {
+		return fmt.Errorf("global configuration error, router-id must be valid")
+	}
 	peer := newPeer(&s.bgpConfig.Global, c, rib, s.policy, s.logger)
 	if err := s.policy.SetPeerPolicy(peer.ID(), c.ApplyPolicy); err != nil {
 		return fmt.Errorf("failed to set peer policy for %s: %v", addr, err)

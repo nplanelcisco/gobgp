@@ -964,7 +964,7 @@ func newPeerandInfo(t *testing.T, myAs, as uint32, address string, rib *table.Ta
 	err = policy.Reset(&oc.RoutingPolicy{}, nil)
 	assert.NoError(t, err)
 	p := newPeer(
-		&oc.Global{Config: oc.GlobalConfig{As: myAs}},
+		&oc.Global{Config: oc.GlobalConfig{As: myAs, RouterId: netip.MustParseAddr("1.2.3.4")}},
 		nConf,
 		rib,
 		policy,
