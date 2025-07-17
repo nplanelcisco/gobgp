@@ -2270,9 +2270,13 @@ func parseRDRT(rdStr string) (bgp.RouteDistinguisherInterface, bgp.ExtendedCommu
 }
 
 func createPeerInfo(as uint32, localId string) *PeerInfo {
+	addr, err := netip.ParseAddr(localId)
+	if err != nil || !addr.IsValid() || !addr.Is4() {
+		return nil
+	}
 	return &PeerInfo{
 		AS:      as,
-		LocalID: net.ParseIP(localId).To4(),
+		LocalID: addr,
 	}
 }
 
