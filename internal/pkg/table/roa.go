@@ -34,15 +34,11 @@ type ROA struct {
 }
 
 func NewROA(family int, prefixByte []byte, prefixLen uint8, maxLen uint8, as uint32, src string) *ROA {
-	bits := 32
-	if family == bgp.AFI_IP6 {
-		bits = 128
-	}
 	addr, ok := netip.AddrFromSlice(prefixByte)
-	if !ok || !addr.IsValid() {
+	if !ok || !addr.IsValid() || family == bgp.AFI_IP6 && !addr.Is6() || family == bgp.AFI_IP && !addr.Is4() {
 		return nil
 	}
-	prefix := netip.PrefixFrom(addr, bits)
+	prefix := netip.PrefixFrom(addr, int(prefixLen))
 	return &ROA{
 		Family:  family,
 		Network: &prefix,
