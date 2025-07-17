@@ -1440,7 +1440,7 @@ func (c *PrefixCondition) Evaluate(path *Path, _ *PolicyOptions) bool {
 	}
 
 	r := nlriToIPNet(path.GetNlri())
-	if r == nil {
+	if r == nil || !r.IsValid() {
 		return false
 	}
 	ones := r.Bits()

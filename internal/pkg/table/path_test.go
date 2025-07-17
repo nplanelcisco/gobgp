@@ -2,7 +2,7 @@
 package table
 
 import (
-	"net"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -368,29 +368,29 @@ func TestReplaceAS(t *testing.T) {
 }
 
 func TestNLRIToIPNet(t *testing.T) {
-	_, n1, _ := net.ParseCIDR("30.30.30.0/24")
+	n1 := netip.MustParsePrefix("30.30.30.0/24")
 	ipNet := nlriToIPNet(bgp.NewIPAddrPrefix(24, "30.30.30.0"))
-	assert.Equal(t, n1, ipNet)
+	assert.Equal(t, &n1, ipNet)
 
-	_, n2, _ := net.ParseCIDR("2806:106e:19::/48")
+	n2 := netip.MustParsePrefix("2806:106e:19::/48")
 	ipNet = nlriToIPNet(bgp.NewIPv6AddrPrefix(48, "2806:106e:19::"))
-	assert.Equal(t, n2, ipNet)
+	assert.Equal(t, &n2, ipNet)
 
 	labels := bgp.NewMPLSLabelStack(100, 200)
-	_, n3, _ := net.ParseCIDR("30.30.30.0/24")
+	n3 := netip.MustParsePrefix("30.30.30.0/24")
 	ipNet = nlriToIPNet(bgp.NewLabeledIPAddrPrefix(24, "30.30.30.0", *labels))
-	assert.Equal(t, n3, ipNet)
+	assert.Equal(t, &n3, ipNet)
 
-	_, n4, _ := net.ParseCIDR("2806:106e:19::/48")
+	n4 := netip.MustParsePrefix("2806:106e:19::/48")
 	ipNet = nlriToIPNet(bgp.NewLabeledIPv6AddrPrefix(48, "2806:106e:19::", *labels))
-	assert.Equal(t, n4, ipNet)
+	assert.Equal(t, &n4, ipNet)
 
 	rd, _ := bgp.ParseRouteDistinguisher("100:100")
-	_, n5, _ := net.ParseCIDR("40.40.40.0/24")
+	n5 := netip.MustParsePrefix("40.40.40.0/24")
 	ipNet = nlriToIPNet(bgp.NewLabeledVPNIPAddrPrefix(24, "40.40.40.0", *labels, rd))
-	assert.Equal(t, n5, ipNet)
+	assert.Equal(t, &n5, ipNet)
 
-	_, n6, _ := net.ParseCIDR("2001:db8:53::/64")
+	n6 := netip.MustParsePrefix("2001:db8:53::/64")
 	ipNet = nlriToIPNet(bgp.NewLabeledVPNIPv6AddrPrefix(64, "2001:db8:53::", *labels, rd))
-	assert.Equal(t, n6, ipNet)
+	assert.Equal(t, &n6, ipNet)
 }
