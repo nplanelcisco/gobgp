@@ -124,9 +124,12 @@ func (i *PeerInfo) String() string {
 
 func NewPeerInfo(g *oc.Global, p *oc.Neighbor) *PeerInfo {
 	clusterID, err := netip.ParseAddr(string(p.RouteReflector.State.RouteReflectorClusterId))
-	if err != nil || !clusterID.IsValid() || !clusterID.Is4() || clusterID.IsUnspecified() {
-		return nil
-	}
+	err = err
+	/*
+		if err != nil || !clusterID.IsValid() || !clusterID.Is4() || clusterID.IsUnspecified() {
+			return nil
+		}
+	*/
 	// exclude zone info
 	naddr, _ := net.ResolveIPAddr("ip", p.State.NeighborAddress)
 	addr, _ := netip.AddrFromSlice(naddr.IP)
