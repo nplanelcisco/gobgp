@@ -1611,14 +1611,14 @@ func (r *IPAddrPrefix) Len(options ...*MarshallingOption) int {
 	return 1 + (int(r.Prefix.Bits())+7)/8
 }
 
-func NewIPAddrPrefix(length uint8, prefix string) *IPAddrPrefix {
+func NewIPAddrPrefix(length uint8, prefixAddr string) *IPAddrPrefix {
 	p := &IPAddrPrefix{
 		IPAddrPrefixDefault{},
 		4,
 	}
 	// TODO: pass the error to the caller
 	// fixme(nplanel) we can simplify this
-	pfx, _ := netip.ParsePrefix(prefix + "/" + strconv.FormatUint(uint64(length), 10))
+	pfx, _ := netip.ParsePrefix(prefixAddr + "/" + strconv.FormatUint(uint64(length), 10))
 	_ = p.decodePrefix(pfx.Addr().AsSlice(), uint8(pfx.Bits()), 4)
 	return p
 }
