@@ -33,6 +33,8 @@ import (
 	"sync"
 )
 
+var rdEOR = &RouteDistinguisherUnknown{DefaultRouteDistinguisher{Type: BGP_RD_EOR}, []byte("EOR")}
+
 type MarshallingOption struct {
 	AddPath    map[Family]BGPAddPathMode
 	Attributes map[BGPAttrType]bool
@@ -2211,7 +2213,7 @@ func (l *LabeledVPNIPAddrPrefix) MarshalJSON() ([]byte, error) {
 
 func NewLabeledVPNIPAddrPrefix(length uint8, prefix string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPAddrPrefix {
 	addr, err := netip.ParseAddr(prefix)
-	if err != nil || !addr.IsValid() {
+	if (err != nil || !addr.IsValid() || !addr.Is4()) && rd != rdEOR {
 		// fixme(nplanel): should return an error or change api
 		return nil
 	}
@@ -2236,7 +2238,7 @@ func (l *LabeledVPNIPv6AddrPrefix) AFI() uint16 {
 
 func NewLabeledVPNIPv6AddrPrefix(length uint8, prefixAddr string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPv6AddrPrefix {
 	addr, err := netip.ParseAddr(prefixAddr)
-	if err != nil || !addr.IsValid() {
+	if (err != nil || !addr.IsValid() || !addr.Is6()) && rd != rdEOR {
 		// fixme(nplanel): should return an error or change api
 		return nil
 	}
@@ -10258,8 +10260,6 @@ func NewPrefixFromFamily(family Family, prefixStr ...string) (prefix AddrPrefixI
 		}
 		return NewIPv6AddrPrefix(uint8(len), addr.String()), nil
 	}
-
-	rdEOR := &RouteDistinguisherUnknown{DefaultRouteDistinguisher{Type: BGP_RD_EOR}, []byte("EOR")}
 
 	switch family {
 	case RF_IPv4_UC, RF_IPv4_MC:
