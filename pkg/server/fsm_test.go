@@ -364,7 +364,7 @@ func TestBadBGPIdentifier(t *testing.T) {
 }
 
 func makePeerAndHandler(m net.Conn) (*peer, *fsmHandler) {
-	fsm := newFSM(&oc.Global{}, &oc.Neighbor{}, log.NewDefaultLogger())
+	fsm := newFSM(&oc.Global{Config: oc.GlobalConfig{RouterId: netip.MustParseAddr("12.34.56.78")}}, &oc.Neighbor{}, log.NewDefaultLogger())
 	fsm.conn = m
 
 	p := &peer{fsm: fsm}

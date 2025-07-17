@@ -123,7 +123,10 @@ func (i *PeerInfo) String() string {
 }
 
 func NewPeerInfo(g *oc.Global, p *oc.Neighbor) *PeerInfo {
-	clusterID, _ := netip.ParseAddr(string(p.RouteReflector.State.RouteReflectorClusterId))
+	clusterID, err := netip.ParseAddr(string(p.RouteReflector.State.RouteReflectorClusterId))
+	if err != nil || !clusterID.IsValid() || !clusterID.Is4() || clusterID.IsUnspecified() {
+		return nil
+	}
 	// exclude zone info
 	naddr, _ := net.ResolveIPAddr("ip", p.State.NeighborAddress)
 	addr, _ := netip.AddrFromSlice(naddr.IP)
@@ -133,7 +136,7 @@ func NewPeerInfo(g *oc.Global, p *oc.Neighbor) *PeerInfo {
 		LocalID:                 g.Config.RouterId,
 		RouteReflectorClient:    p.RouteReflector.Config.RouteReflectorClient,
 		Address:                 addr,
-		RouteReflectorClusterID: netip.AddrFrom4(clusterID.As4()),
+		RouteReflectorClusterID: clusterID,
 		MultihopTtl:             p.EbgpMultihop.Config.MultihopTtl,
 		Confederation:           p.IsConfederationMember(g),
 	}
