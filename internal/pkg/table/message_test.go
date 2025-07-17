@@ -616,7 +616,7 @@ func TestMergeV4NLRIs(t *testing.T) {
 
 	assert.Equal(t, len(l), nr)
 	for i, addr := range addrs {
-		assert.Equal(t, addr, l[i].Prefix.String())
+		assert.Equal(t, addr+"/32", l[i].Prefix.String())
 	}
 	for _, msg := range msgs {
 		d, _ := msg.Serialize()
