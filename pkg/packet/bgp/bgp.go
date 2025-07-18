@@ -1623,6 +1623,9 @@ func NewIPAddrPrefix(length uint8, prefixAddr string) *IPAddrPrefix {
 	// TODO: pass the error to the caller
 	// fixme(nplanel) we can simplify this
 	pfx, _ := netip.ParsePrefix(prefixAddr + "/" + strconv.FormatUint(uint64(length), 10))
+	if length == 0 && prefixAddr == "" {
+		pfx = netip.PrefixFrom(netip.AddrFrom4([4]byte{0, 0, 0, 0}), 32)
+	}
 	_ = p.decodePrefix(pfx.Addr().AsSlice(), uint8(pfx.Bits()), 4)
 	return p
 }
@@ -1643,7 +1646,7 @@ func (r *IPv6AddrPrefix) String() string {
 	return r.Prefix.String()
 }
 
-func NewIPv6AddrPrefix(length uint8, prefix string) *IPv6AddrPrefix {
+func NewIPv6AddrPrefix(length uint8, prefixAddr string) *IPv6AddrPrefix {
 	p := &IPv6AddrPrefix{
 		IPAddrPrefix{
 			IPAddrPrefixDefault{},
@@ -1652,8 +1655,11 @@ func NewIPv6AddrPrefix(length uint8, prefix string) *IPv6AddrPrefix {
 	}
 	// TODO: pass the error to the caller
 	// fixme(nplanel) we can simplify this
-	pfx, _ := netip.ParsePrefix(prefix + "/" + strconv.FormatUint(uint64(length), 10))
-	_ = p.decodePrefix(pfx.Addr().AsSlice(), uint8(pfx.Bits()), 16)
+	pfx, _ := netip.ParsePrefix(prefixAddr + "/" + strconv.FormatUint(uint64(length), 10))
+	if length == 0 && prefixAddr == "" {
+		pfx = netip.PrefixFrom(netip.AddrFrom16([16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}), 128)
+	}
+	_ = p.decodePrefix(pfx.Masked().Addr().AsSlice(), uint8(pfx.Bits()), 16)
 	return p
 }
 
@@ -2215,11 +2221,7 @@ func (l *LabeledVPNIPAddrPrefix) MarshalJSON() ([]byte, error) {
 }
 
 func NewLabeledVPNIPAddrPrefix(length uint8, prefix string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPAddrPrefix {
-	addr, err := netip.ParseAddr(prefix)
-	if (err != nil || !addr.IsValid() || !addr.Is4()) && rd != rdEOR {
-		// fixme(nplanel): should return an error or change api
-		return nil
-	}
+	addr, _ := netip.ParseAddr(prefix)
 	p := netip.PrefixFrom(addr, int(length))
 	return &LabeledVPNIPAddrPrefix{
 		IPAddrPrefixDefault{
@@ -2240,11 +2242,7 @@ func (l *LabeledVPNIPv6AddrPrefix) AFI() uint16 {
 }
 
 func NewLabeledVPNIPv6AddrPrefix(length uint8, prefixAddr string, label MPLSLabelStack, rd RouteDistinguisherInterface) *LabeledVPNIPv6AddrPrefix {
-	addr, err := netip.ParseAddr(prefixAddr)
-	if (err != nil || !addr.IsValid() || !addr.Is6()) && rd != rdEOR {
-		// fixme(nplanel): should return an error or change api
-		return nil
-	}
+	addr, _ := netip.ParseAddr(prefixAddr)
 	p := netip.PrefixFrom(addr, int(length))
 	return &LabeledVPNIPv6AddrPrefix{
 		LabeledVPNIPAddrPrefix{
@@ -2325,7 +2323,7 @@ func (l *LabeledIPAddrPrefix) Serialize(options ...*MarshallingOption) ([]byte, 
 			return nil, err
 		}
 	}
-	buf = append(buf, byte(l.Prefix.Bits()))
+	buf = append(buf, byte(l.Prefix.Bits()+8*l.Labels.Len()))
 	lbuf, err := l.Labels.Serialize()
 	if err != nil {
 		return nil, err
@@ -2354,11 +2352,7 @@ func (l *LabeledIPAddrPrefix) MarshalJSON() ([]byte, error) {
 }
 
 func NewLabeledIPAddrPrefix(length uint8, prefix string, label MPLSLabelStack) *LabeledIPAddrPrefix {
-	addr, err := netip.ParseAddr(prefix)
-	if err != nil || !addr.IsValid() {
-		// fixme(nplanel): should return an error or change api
-		return nil
-	}
+	addr, _ := netip.ParseAddr(prefix)
 	p := netip.PrefixFrom(addr, int(length))
 	fmt.Println("NewLabeledIPAddrPrefix", length, prefix, label)
 	return &LabeledIPAddrPrefix{
@@ -2380,15 +2374,7 @@ func (l *LabeledIPv6AddrPrefix) AFI() uint16 {
 
 func NewLabeledIPv6AddrPrefix(length uint8, prefix string, label MPLSLabelStack) *LabeledIPv6AddrPrefix {
 	addr, _ := netip.ParseAddr(prefix)
-	if !addr.IsValid() {
-		// fixme(nplanel): should return an error or change api
-		return nil
-	}
 	p := netip.PrefixFrom(addr, int(length))
-	if !p.Addr().Is6() {
-		// fixme(nplanel): should return an error or change api
-		return nil
-	}
 	return &LabeledIPv6AddrPrefix{
 		LabeledIPAddrPrefix{
 			IPAddrPrefixDefault{
@@ -3028,7 +3014,7 @@ func NewEVPNMacIPAdvertisementRoute(rd RouteDistinguisherInterface, esi Ethernet
 	mac, _ := net.ParseMAC(macAddress)
 	var ipLen uint8
 	ip, err := netip.ParseAddr(ipAddress)
-	if err != nil || !ip.IsValid() {
+	if err == nil && ip.IsValid() {
 		if ip.Is4() {
 			ipLen = 32
 		} else {
@@ -3716,10 +3702,7 @@ func (n *EncapNLRI) Len(options ...*MarshallingOption) int {
 }
 
 func NewEncapNLRI(endpoint string) *EncapNLRI {
-	addr, err := netip.ParseAddr(endpoint)
-	if err != nil || !addr.IsValid() || !addr.Is4() {
-		return nil
-	}
+	addr, _ := netip.ParseAddr(endpoint)
 	return &EncapNLRI{
 		IPAddrPrefixDefault{Prefix: netip.PrefixFrom(addr, 32)},
 		4,
@@ -3735,10 +3718,7 @@ func (n *Encapv6NLRI) AFI() uint16 {
 }
 
 func NewEncapv6NLRI(endpoint string) *Encapv6NLRI {
-	addr, err := netip.ParseAddr(endpoint)
-	if err != nil || !addr.IsValid() || !addr.Is4() {
-		return nil
-	}
+	addr, _ := netip.ParseAddr(endpoint)
 	return &Encapv6NLRI{
 		EncapNLRI{
 			IPAddrPrefixDefault{Prefix: netip.PrefixFrom(addr, 128)},

@@ -594,6 +594,8 @@ func api2apiutilPath(path *api.Path) (*apiutil.Path, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid path attributes: %w", err)
 	}
+	peerID, _ := netip.ParseAddr(path.SourceId)
+	peerAddress, _ := netip.ParseAddr(path.NeighborIp)
 	p := &apiutil.Path{
 		Nlri:               nlri,
 		Attrs:              attrs,
@@ -602,12 +604,12 @@ func api2apiutilPath(path *api.Path) (*apiutil.Path, error) {
 		Stale:              path.Stale,
 		Withdrawal:         path.IsWithdraw,
 		PeerASN:            path.SourceAsn,
-		PeerID:             net.ParseIP(path.SourceId),
-		PeerAddress:        net.ParseIP(path.NeighborIp),
+		PeerID:             peerID,
+		PeerAddress:        peerAddress,
 		IsFromExternal:     path.IsFromExternal,
 		NoImplicitWithdraw: path.NoImplicitWithdraw,
 	}
-	if p.PeerASN != 0 && p.PeerID == nil {
+	if p.PeerASN != 0 && !p.PeerID.IsValid() {
 		return nil, fmt.Errorf("source ID must be set correctly %v", p.PeerID)
 	}
 	p.Nlri.SetPathIdentifier(path.Identifier)

@@ -2350,7 +2350,7 @@ func apiutil2Path(path *apiutil.Path, isVRFTable bool, isWithdraw ...bool) (*tab
 	// need to check if update with SR Policy nlri comes with mandatory route distinguisher
 	// extended community or NO_ADVERTISE community, with Tunnel Encapsulation Attribute 23
 	// and tunnel type 15. If it is not the case ignore update and log an error.
-	var nexthop net.IP
+	var nexthop netip.Addr
 	isMPFlowSpec := false
 	pattrs := make([]bgp.PathAttributeInterface, 0)
 	seen := make(map[bgp.BGPAttrType]struct{})
@@ -2374,12 +2374,12 @@ func apiutil2Path(path *apiutil.Path, isVRFTable bool, isWithdraw ...bool) (*tab
 			pattrs = append(pattrs, a)
 		}
 	}
-	if !path.Withdrawal && len(nexthop) == 0 && !isMPFlowSpec {
+	if !path.Withdrawal && !nexthop.IsValid() && !isMPFlowSpec {
 		return nil, fmt.Errorf("nexthop not found")
 	}
 
 	rf := bgp.NewFamily(path.Nlri.AFI(), path.Nlri.SAFI())
-	if !isVRFTable && rf == bgp.RF_IPv4_UC && nexthop.To4() != nil {
+	if !isVRFTable && rf == bgp.RF_IPv4_UC && nexthop.Is4() {
 		pattrs = append(pattrs, bgp.NewPathAttributeNextHop(nexthop.String()))
 	} else {
 		pattrs = append(pattrs, bgp.NewPathAttributeMpReachNLRI(nexthop.String(), path.Nlri))

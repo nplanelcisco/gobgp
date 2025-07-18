@@ -395,7 +395,7 @@ func Test_RFC5512(t *testing.T) {
 	n2 := NewEncapNLRI("")
 	err = n2.DecodeFromBytes(buf1)
 	assert.NoError(err)
-	assert.Equal("10.0.0.1", n2.String())
+	assert.Equal("10.0.0.1/32", n2.String())
 
 	n3 := NewEncapv6NLRI("2001::1")
 	buf1, err = n3.Serialize()
@@ -404,7 +404,7 @@ func Test_RFC5512(t *testing.T) {
 	n4 := NewEncapv6NLRI("")
 	err = n4.DecodeFromBytes(buf1)
 	assert.NoError(err)
-	assert.Equal("2001::1", n4.String())
+	assert.Equal("2001::1/128", n4.String())
 }
 
 func Test_ASLen(t *testing.T) {
@@ -768,7 +768,7 @@ func Test_AddPath(t *testing.T) {
 		n1.SetPathLocalIdentifier(20)
 		bits, err := n1.Serialize(opt)
 		assert.NoError(err)
-		n2 := NewLabeledVPNIPAddrPrefix(0, "", MPLSLabelStack{}, nil)
+		n2 := NewLabeledVPNIPAddrPrefix(0, "", *NewMPLSLabelStack(), nil)
 		err = n2.DecodeFromBytes(bits, opt)
 		assert.NoError(err)
 		assert.Equal(n2.PathIdentifier(), uint32(20))
@@ -780,7 +780,7 @@ func Test_AddPath(t *testing.T) {
 		n1.SetPathLocalIdentifier(20)
 		bits, err := n1.Serialize(opt)
 		assert.NoError(err)
-		n2 := NewLabeledVPNIPv6AddrPrefix(0, "", MPLSLabelStack{}, nil)
+		n2 := NewLabeledVPNIPv6AddrPrefix(0, "", *NewMPLSLabelStack(), nil)
 		err = n2.DecodeFromBytes(bits, opt)
 		assert.NoError(err)
 		assert.Equal(n2.PathIdentifier(), uint32(20))
@@ -792,7 +792,7 @@ func Test_AddPath(t *testing.T) {
 		n1.SetPathLocalIdentifier(20)
 		bits, err := n1.Serialize(opt)
 		assert.NoError(err)
-		n2 := NewLabeledIPAddrPrefix(0, "", MPLSLabelStack{})
+		n2 := NewLabeledIPAddrPrefix(0, "", *NewMPLSLabelStack())
 		err = n2.DecodeFromBytes(bits, opt)
 		assert.NoError(err)
 		assert.Equal(n2.PathIdentifier(), uint32(20))
@@ -803,7 +803,7 @@ func Test_AddPath(t *testing.T) {
 		n1.SetPathLocalIdentifier(20)
 		bits, err := n1.Serialize(opt)
 		assert.NoError(err)
-		n2 := NewLabeledIPv6AddrPrefix(0, "", MPLSLabelStack{})
+		n2 := NewLabeledIPv6AddrPrefix(0, "", *NewMPLSLabelStack())
 		err = n2.DecodeFromBytes(bits, opt)
 		assert.NoError(err)
 		assert.Equal(n2.PathIdentifier(), uint32(20))
@@ -944,7 +944,7 @@ func Test_MpReachNLRIWithIPv6PrefixWithIPv4Peering(t *testing.T) {
 	assert.Equal(uint16(AFI_IP6), p.AFI)
 	assert.Equal(uint8(SAFI_UNICAST), p.SAFI)
 	assert.Equal(netip.MustParseAddr("::ffff:172.20.0.1"), p.Nexthop)
-	assert.Equal(netip.MustParseAddr(""), p.LinkLocalNexthop)
+	assert.Equal(netip.Addr{}, p.LinkLocalNexthop)
 	value := []AddrPrefixInterface{
 		NewIPv6AddrPrefix(64, "2001:db8:1:1::"),
 	}

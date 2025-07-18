@@ -1163,24 +1163,24 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 	case *bgp.IPAddrPrefix:
 		nlri.Nlri = &api.NLRI_Prefix{Prefix: &api.IPAddressPrefix{
 			PrefixLen: uint32(v.Prefix.Bits()),
-			Prefix:    v.Prefix.String(),
+			Prefix:    v.Prefix.Masked().Addr().String(),
 		}}
 	case *bgp.IPv6AddrPrefix:
 		nlri.Nlri = &api.NLRI_Prefix{Prefix: &api.IPAddressPrefix{
 			PrefixLen: uint32(v.Prefix.Bits()),
-			Prefix:    v.Prefix.String(),
+			Prefix:    v.Prefix.Masked().Addr().String(),
 		}}
 	case *bgp.LabeledIPAddrPrefix:
 		nlri.Nlri = &api.NLRI_LabeledPrefix{LabeledPrefix: &api.LabeledIPAddressPrefix{
 			Labels:    v.Labels.Labels,
 			PrefixLen: uint32(v.IPPrefixLen()),
-			Prefix:    v.Prefix.String(),
+			Prefix:    v.Prefix.Masked().Addr().String(),
 		}}
 	case *bgp.LabeledIPv6AddrPrefix:
 		nlri.Nlri = &api.NLRI_LabeledPrefix{LabeledPrefix: &api.LabeledIPAddressPrefix{
 			Labels:    v.Labels.Labels,
 			PrefixLen: uint32(v.IPPrefixLen()),
-			Prefix:    v.Prefix.String(),
+			Prefix:    v.Prefix.Masked().Addr().String(),
 		}}
 	case *bgp.EncapNLRI:
 		nlri.Nlri = &api.NLRI_Encapsulation{Encapsulation: &api.EncapsulationNLRI{
@@ -1279,7 +1279,7 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 				Rd:          rd,
 				Esi:         esi,
 				EthernetTag: r.ETag,
-				IpPrefix:    r.IPPrefix.Addr().String(),
+				IpPrefix:    r.IPPrefix.Masked().Addr().String(),
 				IpPrefixLen: uint32(r.IPPrefix.Bits()),
 				Label:       r.Label,
 				GwAddress:   gwAddr,
@@ -1496,7 +1496,8 @@ func MarshalNLRI(value bgp.AddrPrefixInterface) (*api.NLRI, error) {
 			nlri.Nlri = &api.NLRI_MupType_1SessionTransformed{
 				MupType_1SessionTransformed: &api.MUPType1SessionTransformedRoute{
 					Rd:                    rd,
-					Prefix:                r.Prefix.String(),
+					Prefix:                r.Prefix.Masked().Addr().String(),
+					PrefixLength:          uint32(r.Prefix.Bits()),
 					Teid:                  binary.BigEndian.Uint32(r.TEID.AsSlice()),
 					Qfi:                   uint32(r.QFI),
 					EndpointAddressLength: uint32(r.EndpointAddressLength),
