@@ -1502,7 +1502,9 @@ func (r *IPAddrPrefixDefault) decodePrefix(data []byte, bitlen uint8, addrlen ui
 	if len(data) < bytelen {
 		eCode := uint8(BGP_ERROR_UPDATE_MESSAGE_ERROR)
 		eSubCode := uint8(BGP_ERROR_SUB_MALFORMED_ATTRIBUTE_LIST)
-		return NewMessageError(eCode, eSubCode, nil, "network bytes is short")
+		fmt.Printf("network bytes is short %v %v %v %v |||\n", len(data), bitlen, addrlen, bytelen)
+		panic("this should never happen, please report a bug")
+		return NewMessageError(eCode, eSubCode, nil, fmt.Sprintf("network bytes is short %v %v %v |||", len(data), bitlen, bytelen))
 	}
 	if bitlen > addrlen*8 {
 		eCode := uint8(BGP_ERROR_UPDATE_MESSAGE_ERROR)
@@ -2024,6 +2026,7 @@ func (l *MPLSLabelStack) Serialize(options ...*MarshallingOption) ([]byte, error
 		buf[i*3+1] = byte(label >> 8 & 0xff)
 		buf[i*3+2] = byte(label & 0xff)
 	}
+	fmt.Println("MPLSLabelStack.Serialize", l.Labels)
 	buf[len(buf)-1] |= 1
 	return buf, nil
 }
@@ -2357,6 +2360,7 @@ func NewLabeledIPAddrPrefix(length uint8, prefix string, label MPLSLabelStack) *
 		return nil
 	}
 	p := netip.PrefixFrom(addr, int(length))
+	fmt.Println("NewLabeledIPAddrPrefix", length, prefix, label)
 	return &LabeledIPAddrPrefix{
 		IPAddrPrefixDefault{
 			Prefix: p,
@@ -10248,6 +10252,11 @@ func GetFamily(name string) (Family, error) {
 }
 
 func NewPrefixFromFamily(family Family, prefixStr ...string) (prefix AddrPrefixInterface, err error) {
+	defer func() {
+		if prefix == nil && err == nil {
+			panic(fmt.Sprintf("NewPrefixFromFamily returned nil prefix: family=%v, prefixStr=%v", family, prefixStr))
+		}
+	}()
 	f := func(s string) (AddrPrefixInterface, error) {
 		addr, net, err := net.ParseCIDR(s)
 		if err != nil {
@@ -11744,6 +11753,7 @@ func (p *PathAttributeMpReachNLRI) DecodeFromBytes(data []byte, options ...*Mars
 		if err != nil {
 			return NewMessageError(eCode, BGP_ERROR_SUB_INVALID_NETWORK_FIELD, eData, err.Error())
 		}
+		fmt.Printf("Decoding prefix: %+v %+v\n", prefix, family)
 
 		err = prefix.DecodeFromBytes(value, options...)
 		if err != nil {
@@ -15580,6 +15590,7 @@ func parseBody(h *BGPHeader, data []byte, options ...*MarshallingOption) (*BGPMe
 func ParseBGPMessage(data []byte, options ...*MarshallingOption) (*BGPMessage, error) {
 	h := &BGPHeader{}
 	if err := h.DecodeFromBytes(data, options...); err != nil {
+		fmt.Println("Error decoding BGP header:", err)
 		return nil, err
 	}
 

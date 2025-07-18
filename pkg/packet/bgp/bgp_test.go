@@ -18,6 +18,7 @@ package bgp
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"net/netip"
@@ -56,12 +57,16 @@ func BenchmarkNormalizeFlowSpecOpValues(b *testing.B) {
 func Test_Message(t *testing.T) {
 	l := []*BGPMessage{keepalive(), notification(), refresh(), NewTestBGPOpenMessage(), NewTestBGPUpdateMessage()}
 
-	for _, m1 := range l {
+	for i, m1 := range l {
+		fmt.Println("Test_Message", i, m1)
 		buf1, err := m1.Serialize()
 		assert.NoError(t, err)
 
 		t.Log("LEN =", len(buf1))
 		m2, err := ParseBGPMessage(buf1)
+		if err != nil {
+			t.Fatalf("ParseBGPMessage failed: %s %v %v", err, i, m1)
+		}
 		assert.NoError(t, err)
 
 		// FIXME: shouldn't but workaround for some structs.
