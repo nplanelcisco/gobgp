@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"net/netip"
 	"reflect"
 	"regexp"
 	"slices"
@@ -3607,9 +3606,8 @@ func NewEVPNNLRI(routeType uint8, routeTypeData EVPNRouteTypeInterface) *EVPNNLR
 }
 
 type EncapNLRI struct {
-	PrefixDefault
-	Endpoint netip.Addr
-	addrlen  uint8
+	IPAddrPrefixDefault
+	addrlen uint8
 }
 
 func (n *EncapNLRI) DecodeFromBytes(data []byte, options ...*MarshallingOption) error {
@@ -3627,19 +3625,16 @@ func (n *EncapNLRI) DecodeFromBytes(data []byte, options ...*MarshallingOption) 
 			return err
 		}
 	}
-	if len(data) < 1 {
+	if len(data) < 4 {
 		eCode := uint8(BGP_ERROR_UPDATE_MESSAGE_ERROR)
 		eSubCode := uint8(BGP_ERROR_SUB_MALFORMED_ATTRIBUTE_LIST)
 		return NewMessageError(eCode, eSubCode, nil, "prefix misses length field")
 	}
-	switch data[0] {
-	case net.IPv4len * 8, net.IPv6len * 8:
-	default:
-		return NewMessageError(BGP_ERROR_UPDATE_MESSAGE_ERROR, BGP_ERROR_SUB_INVALID_NETWORK_FIELD, nil, "nlri length isn't valid")
+	n.Length = data[0]
+	if n.addrlen == 0 {
+		n.addrlen = 4
 	}
-	addr, _ := netip.AddrFromSlice(data[1:])
-	n.Endpoint = addr
-	return nil
+	return n.decodePrefix(data[1:], n.Length, n.addrlen)
 }
 
 func (n *EncapNLRI) Serialize(options ...*MarshallingOption) ([]byte, error) {
@@ -3655,17 +3650,22 @@ func (n *EncapNLRI) Serialize(options ...*MarshallingOption) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if n.Endpoint.Is4() {
+	if n.Prefix.To4() != nil {
 		buf = append(buf, net.IPv4len*8)
+		n.Prefix = n.Prefix.To4()
 	} else {
 		buf = append(buf, net.IPv6len*8)
 	}
-	buf = append(buf, n.Endpoint.AsSlice()...)
-	return buf, nil
+	n.Length = buf[len(buf)-1]
+	pbuf, err := n.serializePrefix(n.Length)
+	if err != nil {
+		return nil, err
+	}
+	return append(buf, pbuf...), nil
 }
 
 func (n *EncapNLRI) String() string {
-	return n.Endpoint.String()
+	return n.Prefix.String()
 }
 
 func (n *EncapNLRI) AFI() uint16 {
@@ -3677,31 +3677,13 @@ func (n *EncapNLRI) SAFI() uint8 {
 }
 
 func (n *EncapNLRI) Len(options ...*MarshallingOption) int {
-	return 1 + len(n.Endpoint.AsSlice())
-}
-
-func (n *EncapNLRI) Flat() map[string]string {
-	return map[string]string{
-		"Endpoint": n.Endpoint.String(),
-	}
-}
-
-func (n *EncapNLRI) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Endpoint string `json:"endpoint"`
-	}{
-		Endpoint: n.Endpoint.String(),
-	})
+	return 1 + len(n.Prefix)
 }
 
 func NewEncapNLRI(endpoint string) *EncapNLRI {
-	var addr netip.Addr
-	if endpoint != "" {
-		addr = netip.MustParseAddr(endpoint)
-	}
 	return &EncapNLRI{
-		Endpoint: addr,
-		addrlen:  4,
+		IPAddrPrefixDefault{Length: 32, Prefix: net.ParseIP(endpoint).To4()},
+		4,
 	}
 }
 
@@ -3713,29 +3695,11 @@ func (n *Encapv6NLRI) AFI() uint16 {
 	return AFI_IP6
 }
 
-func (n *Encapv6NLRI) Flat() map[string]string {
-	return map[string]string{
-		"Endpoint": n.Endpoint.String(),
-	}
-}
-
-func (n *Encapv6NLRI) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Endpoint string `json:"endpoint"`
-	}{
-		Endpoint: n.Endpoint.String(),
-	})
-}
-
 func NewEncapv6NLRI(endpoint string) *Encapv6NLRI {
-	var addr netip.Addr
-	if endpoint != "" {
-		addr = netip.MustParseAddr(endpoint)
-	}
 	return &Encapv6NLRI{
 		EncapNLRI{
-			Endpoint: addr,
-			addrlen:  16,
+			IPAddrPrefixDefault{Length: 128, Prefix: net.ParseIP(endpoint)},
+			16,
 		},
 	}
 }
