@@ -1128,8 +1128,11 @@ func buildopen(gConf *oc.Global, pConf *oc.Neighbor) *bgp.BGPMessage {
 	return msg
 }
 
-func readAll(conn net.Conn, length int) ([]byte, error) {
+func readAll(ctx context.Context, conn net.Conn, length int) ([]byte, error) {
 	buf := make([]byte, length)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	_, err := io.ReadFull(conn, buf)
 	if err != nil {
 		return nil, err
@@ -1185,9 +1188,9 @@ func (h *fsmHandler) handlingError(m *bgp.BGPMessage, e error, useRevisedError b
 	return handling
 }
 
-func (h *fsmHandler) recvMessageWithError(conn net.Conn, stateReasonCh chan<- fsmStateReason) (*fsmMsg, error) {
-	headerBuf, err := readAll(conn, bgp.BGP_HEADER_LENGTH)
-	if errors.Is(err, os.ErrDeadlineExceeded) {
+func (h *fsmHandler) recvMessageWithError(ctx context.Context, conn net.Conn, stateReasonCh chan<- fsmStateReason) (*fsmMsg, error) {
+	headerBuf, err := readAll(ctx, conn, bgp.BGP_HEADER_LENGTH)
+	if errors.Is(err, os.ErrDeadlineExceeded) || ctx.Err() != nil {
 		// we set a read deadline when we cancel the FSM handler context,
 		// so this is expected when the FSM is shutting down.
 		// We dont' send a state reason here because the FSM is already
@@ -1217,7 +1220,7 @@ func (h *fsmHandler) recvMessageWithError(conn net.Conn, stateReasonCh chan<- fs
 		return fmsg, err
 	}
 
-	bodyBuf, err := readAll(conn, int(hd.Len)-bgp.BGP_HEADER_LENGTH)
+	bodyBuf, err := readAll(ctx, conn, int(hd.Len)-bgp.BGP_HEADER_LENGTH)
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		return nil, nil
 	} else if err != nil {
@@ -1262,7 +1265,7 @@ func (h *fsmHandler) recvMessageWithError(conn net.Conn, stateReasonCh chan<- fs
 func (h *fsmHandler) recvMessage(ctx context.Context, conn net.Conn, recvChan chan<- *fsmMsg, stateReasonCh chan<- fsmStateReason, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	fmsg, _ := h.recvMessageWithError(conn, stateReasonCh)
+	fmsg, _ := h.recvMessageWithError(ctx, conn, stateReasonCh)
 	if fmsg != nil && ctx.Err() == nil {
 		recvChan <- fmsg
 	}
@@ -1704,7 +1707,7 @@ func (h *fsmHandler) recvMessageloop(ctx context.Context, conn net.Conn, holdtim
 	defer wg.Done()
 
 	for ctx.Err() == nil {
-		fmsg, err := h.recvMessageWithError(conn, stateReasonCh)
+		fmsg, err := h.recvMessageWithError(ctx, conn, stateReasonCh)
 		if fmsg != nil && ctx.Err() == nil {
 			if m, ok := fmsg.MsgData.(*bgp.MessageError); ok {
 				nonblockSendChannel(h.fsm.notification, bgp.NewBGPNotificationMessage(m.TypeCode, m.SubTypeCode, m.Data))
@@ -1829,8 +1832,6 @@ func (h *fsmHandler) established(ctx context.Context) (bgp.FSMState, *fsmStateRe
 	go h.recvMessageloop(ioCtx, fsm.conn, holdtimerResetCh, reasonCh, wg)
 
 	defer func() {
-		// for to stop the recv goroutine
-		fsm.conn.SetReadDeadline(time.Now())
 		cancel()
 		wg.Wait()
 	}()
