@@ -225,7 +225,7 @@ func initializeConn(fsm *fsm, conn net.Conn) {
 }
 
 type outgoingConn struct {
-	conn net.Conn
+	conn netpoll.Connection
 	open *bgp.BGPMessage
 }
 
