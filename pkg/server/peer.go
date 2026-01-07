@@ -175,20 +175,20 @@ func (peer *peer) isIBGPPeer() bool {
 }
 
 func (peer *peer) isRouteServerClient() bool {
-	peer.fsm.lock.Lock()
-	defer peer.fsm.lock.Unlock()
+	//peer.fsm.lock.Lock()
+	//defer peer.fsm.lock.Unlock()
 	return peer.fsm.pConf.RouteServer.Config.RouteServerClient
 }
 
 func (peer *peer) isSecondaryRouteEnabled() bool {
-	peer.fsm.lock.Lock()
-	defer peer.fsm.lock.Unlock()
+	//peer.fsm.lock.Lock()
+	//defer peer.fsm.lock.Unlock()
 	return peer.fsm.pConf.RouteServer.Config.RouteServerClient && peer.fsm.pConf.RouteServer.Config.SecondaryRoute
 }
 
 func (peer *peer) isRouteReflectorClient() bool {
-	peer.fsm.lock.Lock()
-	defer peer.fsm.lock.Unlock()
+	//peer.fsm.lock.Lock()
+	//defer peer.fsm.lock.Unlock()
 	return peer.fsm.pConf.RouteReflector.Config.RouteReflectorClient
 }
 

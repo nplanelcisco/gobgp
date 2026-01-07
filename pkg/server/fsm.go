@@ -358,9 +358,13 @@ func (ocm *outgoingConnManager) stop() {
 
 type fsm struct {
 	// protected by mutex
-	lock     sync.Mutex
-	gConf    *oc.Global
-	pConf    *oc.Neighbor
+	lock  sync.Mutex
+	gConf *oc.Global
+	pConf *oc.Neighbor
+	/*
+		pConfLockState  sync.Mutex
+		pConfLockTimers sync.Mutex
+	*/
 	capMap   map[bgp.BGPCapabilityCode][]bgp.ParameterCapabilityInterface
 	recvOpen *bgp.BGPMessage
 

@@ -503,7 +503,8 @@ func filterpath(peer *peer, path, old *table.Path) *table.Path {
 					return old.Clone(true)
 				}
 			}
-			peer.fsm.logger.Debug("From same AS, ignore", slog.Any("Path", path))
+			// removed as it's too noisy
+			// peer.fsm.logger.Debug("From same AS, ignore", slog.Any("Path", path))
 			return nil
 		}
 	}
@@ -1231,9 +1232,9 @@ func (s *BgpServer) propagateUpdateToNeighbors(rib *table.TableManager, source *
 			continue
 		}
 		f := func() bgp.Family {
-			targetPeer.fsm.lock.Lock()
+			//			targetPeer.fsm.lock.Lock()
 			peerVrf := targetPeer.fsm.pConf.Config.Vrf
-			targetPeer.fsm.lock.Unlock()
+			//			targetPeer.fsm.lock.Unlock()
 			if peerVrf != "" {
 				switch family {
 				case bgp.RF_IPv4_VPN:
