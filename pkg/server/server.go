@@ -24,12 +24,14 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"runtime"
 	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/dgryski/go-farm"
 	"github.com/eapache/channels"
 	"github.com/google/uuid"
@@ -119,7 +121,7 @@ type BgpServer struct {
 	acceptCh     chan net.Conn
 	mgmtCh       chan *mgmtOp
 	policy       *table.RoutingPolicy
-	listeners    []*netutils.TCPListener
+	listeners    []netpoll.Listener
 	neighborMap  map[netip.Addr]*peer
 	peerGroupMap map[string]*peerGroup
 	globalRib    *table.TableManager
@@ -199,14 +201,14 @@ func (s *BgpServer) Stop() {
 	}
 }
 
-func (s *BgpServer) listListeners(addr string) []*net.TCPListener {
-	list := make([]*net.TCPListener, 0, len(s.listeners))
+func (s *BgpServer) listListeners(addr string) []netpoll.Listener {
+	list := make([]netpoll.Listener, 0, len(s.listeners))
 	rhs := net.ParseIP(addr).To4() != nil
 	for _, l := range s.listeners {
 		host, _, _ := net.SplitHostPort(l.Addr().String())
 		lhs := net.ParseIP(host).To4() != nil
 		if lhs == rhs {
-			list = append(list, l.Listener())
+			list = append(list, l)
 		}
 	}
 	return list
@@ -362,7 +364,7 @@ func (s *BgpServer) Serve() {
 	s.runningCtx = ctx
 	s.runningCancel = cancel
 	s.shutdownWG.Add(1)
-	s.listeners = make([]*netutils.TCPListener, 0, 2)
+	s.listeners = make([]netpoll.Listener, 0, 2)
 
 	defer func() {
 		s.shutdownWG.Done()
@@ -2310,6 +2312,107 @@ func (s *BgpServer) updatePath(vrfId string, pathList []*table.Path) error {
 	return err
 }
 
+/* The Connection Callback Sequence Diagram
+| Connection State                     | Callback Function | Notes
+|   Connected but not initialized      |    OnPrepare      | Conn is not registered into poller
+|   Connected and initialized          |    OnConnect      | Conn is ready for read or write
+|   Read first byte                    |    OnRequest      | Conn is ready for read or write
+|   Peer closed but conn is active     |    OnDisconnect   | Conn access will race with OnRequest function
+|   Self closed and conn is closed     |    CloseCallback  | Conn is destroyed
+
+Execution Order:
+  OnPrepare => OnConnect => OnRequest      => CloseCallback
+                            OnDisconnect
+Note: only OnRequest and OnDisconnect will be executed in parallel
+*/
+
+// OnPrepare is used to inject custom preparation at connection initialization,
+// which is optional but important in some scenarios. For example, a qps limiter
+// can be set by closing overloaded connections directly in OnPrepare.
+//
+// Return:
+// context will become the argument of OnRequest.
+// Usually, custom resources can be initialized in OnPrepare and used in OnRequest.
+//
+// PLEASE NOTE:
+// OnPrepare is executed without any data in the connection,
+// so Reader() or Writer() cannot be used here, but may be supported in the future.
+func (s *BgpServer) onPrepare(connection netpoll.Connection) context.Context {
+	s.logger.Debug("onPrepare called", slog.String("Connection", connection.RemoteAddr().String()))
+	return context.Background()
+}
+
+// OnConnect is called once connection created.
+// It supports read/write/close connection, and could return a ctx which will be passed to OnRequest.
+// OnConnect will not block the poller since it's executed asynchronously.
+// Only after OnConnect finished the OnRequest could be executed.
+//
+// An example usage in TCP Proxy scenario:
+//
+//	func onConnect(ctx context.Context, upstream netpoll.Connection) context.Context {
+//		downstream, _ := netpoll.DialConnection("tcp", downstreamAddr, time.Second)
+//		return context.WithValue(ctx, downstreamKey, downstream)
+//	}
+//
+//	func onRequest(ctx context.Context, upstream netpoll.Connection) error {
+//		downstream := ctx.Value(downstreamKey).(netpoll.Connection)
+//	}
+func (s *BgpServer) onConnect(ctx context.Context, connection netpoll.Connection) context.Context {
+	s.logger.Debug("onConnect called", slog.String("Connection", connection.RemoteAddr().String()))
+	return ctx
+}
+
+// OnDisconnect is called once connection is going to be closed.
+// OnDisconnect must return as quick as possible because it will block poller.
+// OnDisconnect is different from CloseCallback, you could check with "The Connection Callback Sequence Diagram" section.
+func (s *BgpServer) onDisconnect(ctx context.Context, connection netpoll.Connection) {
+	s.logger.Debug("onDisconnect called", slog.String("Connection", connection.RemoteAddr().String()))
+	return
+}
+
+// OnRequest defines the function for handling connection. When data is sent from the connection peer,
+// netpoll actively reads the data in LT mode and places it in the connection's input buffer.
+// Generally, OnRequest starts handling the data in the following way:
+//
+//	func OnRequest(ctx context, connection Connection) error {
+//		input := connection.Reader().Next(n)
+//		handling input data...
+//		send, _ := connection.Writer().Malloc(l)
+//		copy(send, output)
+//		connection.Flush()
+//		return nil
+//	}
+//
+// OnRequest will run in a separate goroutine and
+// it is guaranteed that there is one and only one OnRequest running at the same time.
+// The underlying logic is similar to:
+//
+//	go func() {
+//		for !connection.Reader().IsEmpty() {
+//			OnRequest(ctx, connection)
+//		}
+//	}()
+//
+// PLEASE NOTE:
+// OnRequest must either eventually read all the input data or actively Close the connection,
+// otherwise the goroutine will fall into a dead loop.
+//
+// Return: error is unused which will be ignored directly.
+func (s *BgpServer) onRequest(ctx context.Context, connection netpoll.Connection) error {
+	l := connection.Reader().Len()
+	s.logger.Debug("onRequest called", slog.String("Connection", connection.RemoteAddr().String()), slog.Int("Length", l))
+	connection.Reader().Next(l) // drain all data
+	return nil
+}
+
+func init() {
+	ncfg := netpoll.Config{
+		PollerNum: runtime.GOMAXPROCS(0),
+		//		LoadBalance: netpoll.RoundRobin,
+	}
+	netpoll.Configure(ncfg)
+}
+
 func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error {
 	if r == nil || r.Global == nil {
 		return fmt.Errorf("nil request")
@@ -2332,9 +2435,30 @@ func (s *BgpServer) StartBgp(ctx context.Context, r *api.StartBgpRequest) error 
 				if err != nil {
 					return err
 				}
-				s.listeners = append(s.listeners, l)
+				nl, err := netpoll.ConvertListener(l.Listener())
+				if err != nil {
+					return err
+				}
+				s.listeners = append(s.listeners, nl)
+
+				eventLoop, err := netpoll.NewEventLoop(
+					s.onRequest,
+					netpoll.WithOnConnect(s.onConnect),
+					netpoll.WithOnPrepare(s.onPrepare),
+					netpoll.WithOnDisconnect(s.onDisconnect),
+					//		netpoll.WithIdleTimeout(10*time.Second),
+					//		netpoll.WithReadTimeout(time.Second),
+				)
+				if err != nil {
+					return err
+				}
+
+				go func() {
+					eventLoop.Serve(nl)
+				}()
+				s.logger.Info("BGP server listening on", slog.String("address", l.Addr().String()))
 			}
-			s.acceptCh = acceptCh
+			//			s.acceptCh = acceptCh
 		}
 
 		rfs, _ := oc.AfiSafis(c.AfiSafis).ToRfList()
@@ -3135,18 +3259,22 @@ func (s *BgpServer) addNeighbor(c *oc.Neighbor) error {
 		return fmt.Errorf("can't be both route-server-client and route-reflector-client")
 	}
 
-	if s.bgpConfig.Global.Config.Port > 0 {
-		for _, l := range s.listListeners(addr) {
-			if c.Config.AuthPassword != "" {
-				if err := netutils.SetTCPMD5SigSockopt(l, addr, c.Config.AuthPassword); err != nil {
-					s.logger.Warn("failed to set md5",
-						slog.String("Topic", "Peer"),
-						slog.String("Key", addr),
-						slog.String("Err", err.Error()))
+	//FIXME
+	/*
+		if s.bgpConfig.Global.Config.Port > 0 {
+			for _, l := range s.listListeners(addr) {
+				if c.Config.AuthPassword != "" {
+					if err := netutils.SetTCPMD5SigSockopt(l, addr, c.Config.AuthPassword); err != nil {
+						s.logger.Warn("failed to set md5",
+							slog.String("Topic", "Peer"),
+							slog.String("Key", addr),
+							slog.String("Err", err.Error()))
+					}
 				}
 			}
 		}
-	}
+	*/
+
 	s.logger.Info("Add a peer configuration",
 		slog.String("Topic", "Peer"),
 		slog.String("Key", addr))
@@ -3211,24 +3339,26 @@ func (s *BgpServer) AddDynamicNeighbor(ctx context.Context, r *api.AddDynamicNei
 		}
 		s.peerGroupMap[c.Config.PeerGroup].AddDynamicNeighbor(c)
 
-		pConf := s.peerGroupMap[c.Config.PeerGroup].Conf
-		if pConf.Config.AuthPassword != "" {
-			prefix := r.DynamicNeighbor.Prefix
-			addr, _, _ := net.ParseCIDR(prefix)
-			for _, l := range s.listListeners(addr.String()) {
-				if err := netutils.SetTCPMD5SigSockopt(l, prefix, pConf.Config.AuthPassword); err != nil {
-					s.logger.Warn("failed to set md5",
-						slog.String("Topic", "Peer"),
-						slog.String("Key", prefix),
-						slog.String("Err", err.Error()))
-				} else {
-					s.logger.Info("successfully set md5 for dynamic peer",
-						slog.String("Topic", "Peer"),
-						slog.String("Key", prefix),
-					)
+		/*
+			pConf := s.peerGroupMap[c.Config.PeerGroup].Conf
+				if pConf.Config.AuthPassword != "" {
+					prefix := r.DynamicNeighbor.Prefix
+					addr, _, _ := net.ParseCIDR(prefix)
+					for _, l := range s.listListeners(addr.String()) {
+						if err := netutils.SetTCPMD5SigSockopt(l, prefix, pConf.Config.AuthPassword); err != nil {
+							s.logger.Warn("failed to set md5",
+								slog.String("Topic", "Peer"),
+								slog.String("Key", prefix),
+								slog.String("Err", err.Error()))
+						} else {
+							s.logger.Info("successfully set md5 for dynamic peer",
+								slog.String("Topic", "Peer"),
+								slog.String("Key", prefix),
+							)
+						}
+					}
 				}
-			}
-		}
+		*/
 		return nil
 	}, true)
 }
@@ -3270,13 +3400,15 @@ func (s *BgpServer) deleteNeighbor(c *oc.Neighbor, code, subcode uint8, sendNoti
 	if !y {
 		return fmt.Errorf("can't delete a peer configuration for %s", addr)
 	}
-	for _, l := range s.listListeners(addr) {
-		if c.Config.AuthPassword != "" {
-			if err := netutils.SetTCPMD5SigSockopt(l, addr, ""); err != nil {
-				n.fsm.logger.Warn("failed to unset md5", slog.String("Err", err.Error()))
+	/*
+		for _, l := range s.listListeners(addr) {
+			if c.Config.AuthPassword != "" {
+				if err := netutils.SetTCPMD5SigSockopt(l, addr, ""); err != nil {
+					n.fsm.logger.Warn("failed to unset md5", slog.String("Err", err.Error()))
+				}
 			}
 		}
-	}
+	*/
 	n.fsm.logger.Info("Delete a peer configuration")
 
 	if sendNotification {
@@ -3325,29 +3457,31 @@ func (s *BgpServer) DeleteDynamicNeighbor(ctx context.Context, r *api.DeleteDyna
 	return s.mgmtOperation(func() error {
 		s.peerGroupMap[r.PeerGroup].DeleteDynamicNeighbor(r.Prefix)
 
-		if pg, ok := s.peerGroupMap[r.PeerGroup]; ok {
-			pConf := pg.Conf
-			if pConf.Config.AuthPassword != "" {
-				prefix := r.Prefix
-				addr, _, perr := net.ParseCIDR(prefix)
-				if perr == nil {
-					for _, l := range s.listListeners(addr.String()) {
-						if err := netutils.SetTCPMD5SigSockopt(l, prefix, ""); err != nil {
-							s.logger.Warn("failed to clear md5",
-								slog.String("Topic", "Peer"),
-								slog.String("Key", prefix),
-								slog.String("Err", err.Error()))
+		/*
+			if pg, ok := s.peerGroupMap[r.PeerGroup]; ok {
+				pConf := pg.Conf
+				if pConf.Config.AuthPassword != "" {
+					prefix := r.Prefix
+					addr, _, perr := net.ParseCIDR(prefix)
+					if perr == nil {
+						for _, l := range s.listListeners(addr.String()) {
+							if err := netutils.SetTCPMD5SigSockopt(l, prefix, ""); err != nil {
+								s.logger.Warn("failed to clear md5",
+									slog.String("Topic", "Peer"),
+									slog.String("Key", prefix),
+									slog.String("Err", err.Error()))
+							}
 						}
+					} else {
+						s.logger.Warn("Cannot clear up dynamic MD5, invalid prefix",
+							slog.String("Topic", "Peer"),
+							slog.String("Key", prefix),
+							slog.String("Err", perr.Error()),
+						)
 					}
-				} else {
-					s.logger.Warn("Cannot clear up dynamic MD5, invalid prefix",
-						slog.String("Topic", "Peer"),
-						slog.String("Key", prefix),
-						slog.String("Err", perr.Error()),
-					)
 				}
 			}
-		}
+		*/
 		return nil
 	}, true)
 }

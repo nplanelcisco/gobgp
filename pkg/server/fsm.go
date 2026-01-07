@@ -29,9 +29,9 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/eapache/channels"
 	"github.com/osrg/gobgp/v4/internal/pkg/netutils"
 	"github.com/osrg/gobgp/v4/internal/pkg/table"
@@ -264,7 +264,7 @@ func (ocm *outgoingConnManager) run(ch chan<- outgoingConn) {
 		return
 	}
 
-	var conn net.Conn
+	var conn netpoll.Connection
 	for {
 		switch ocm.state.Load() {
 		case bgp.BGP_FSM_CONNECT:
@@ -284,10 +284,16 @@ func (ocm *outgoingConnManager) run(ch chan<- outgoingConn) {
 			b, _ := open.Serialize()
 
 			conn.SetWriteDeadline(time.Now().Add(time.Second))
-			if _, err := conn.Write(b); err != nil {
+			w := conn.Writer()
+			if n, err := w.WriteBinary(b); err != nil || n != len(b) {
 				conn.Close()
 				continue
 			}
+			if err := w.Flush(); err != nil {
+				conn.Close()
+				continue
+			}
+
 			fsm.bgpMessageStateUpdate(bgp.BGP_MSG_OPEN, false)
 			fsm.logger.Debug("outgoing connection established")
 			ocm.state.Store(bgp.BGP_FSM_OPENSENT)
@@ -800,7 +806,7 @@ func (h *fsmHandler) idle(ctx context.Context) (bgp.FSMState, *fsmStateReason) {
 	}
 }
 
-func (h *fsmHandler) connectLoop(ctx context.Context) net.Conn {
+func (h *fsmHandler) connectLoop(ctx context.Context) netpoll.Connection {
 	fsm := h.fsm
 
 	retryInterval, addr, port, password, ttl, ttlMin, mss, localAddress, localPort, bindInterface := func() (int, string, int, string, uint8, uint8, uint16, string, int, string) {
@@ -846,18 +852,38 @@ func (h *fsmHandler) connectLoop(ctx context.Context) net.Conn {
 		if err != nil {
 			fsm.logger.Warn("failed to resolve local address")
 		}
+		laddr = laddr
 
 		if err == nil {
-			d := net.Dialer{
-				LocalAddr: laddr,
-				Timeout:   time.Duration(max(retryInterval-1, minConnectRetryInterval)) * time.Second,
-				KeepAlive: -1,
-				Control: func(network, address string, c syscall.RawConn) error {
-					return netutils.DialerControl(fsm.logger, network, address, c, ttl, ttlMin, mss, password, bindInterface)
-				},
-			}
+			timeout := time.Duration(max(retryInterval-1, minConnectRetryInterval)) * time.Second
+			connAddrPort := net.JoinHostPort(addr, strconv.Itoa(port))
 
-			conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(addr, strconv.Itoa(port)))
+			l := netpoll.TCPAddr{TCPAddr: *laddr}
+			r := netpoll.TCPAddr{}
+			network := "tcp"
+			ip := net.ParseIP(addr)
+			if ip.To4() == nil {
+				network = "tcp6"
+			}
+			r.IP = ip
+			r.Port = port
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			var conn netpoll.Connection
+			conn, err := netpoll.DialTCP(ctx, network, &l, &r)
+			if err != nil {
+				fsm.logger.Debug("failed to connect", slog.String("Conn", connAddrPort), slog.String("Error", err.Error()))
+				cancel()
+				continue
+			}
+			fd := conn.(netpoll.Conn).Fd()
+			if err := netutils.DialerControl(fsm.logger, "tcp", connAddrPort, fd, ttl, ttlMin, mss, password, bindInterface); err != nil {
+				fsm.logger.Error("failed to set socket options", slog.String("Conn", connAddrPort), slog.String("Error", err.Error()))
+				conn.Close()
+				cancel()
+				continue
+			}
+			defer cancel()
+
 			select {
 			case <-ctx.Done():
 				fsm.logger.Debug("stop connect loop")
@@ -871,7 +897,7 @@ func (h *fsmHandler) connectLoop(ctx context.Context) net.Conn {
 			if err == nil {
 				return conn
 			} else {
-				fsm.logger.Debug("failed to connect", slog.String("Error", err.Error()))
+				fsm.logger.Debug("failed to connect", slog.String("Conn", connAddrPort), slog.String("Error", err.Error()))
 			}
 		}
 		tick = retryInterval

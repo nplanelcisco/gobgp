@@ -33,6 +33,12 @@ func setSockOptString(sc syscall.RawConn, level int, opt int, str string) error 
 	return opterr
 }
 
+func setSockOptStringFd(fd int, level int, opt int, str string) error {
+	var opterr error
+	opterr = syscall.SetsockoptString(fd, level, opt, str)
+	return opterr
+}
+
 func setSockOptInt(sc syscall.RawConn, level, name, value int) error {
 	var opterr error
 	fn := func(s uintptr) {

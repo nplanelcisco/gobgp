@@ -66,7 +66,7 @@ type TCPListener struct {
 	logger       *slog.Logger
 }
 
-func listenControl(logger *slog.Logger, bindToDev string) func(network, address string, c syscall.RawConn) error {
+func listenControl(logger *slog.Logger, bindToDev string) func(network, address string, fd syscall.RawConn) error {
 	return func(network, address string, c syscall.RawConn) error {
 		family := extractFamilyFromAddress(address)
 		if bindToDev != "" {
@@ -176,7 +176,7 @@ func NewTCPListener(logger *slog.Logger, address string, port uint32, bindToDev 
 		acceptedConn: cmap.New[*TCPConn](),
 		logger:       logger,
 	}
-	go l.acceptLoop()
+	//go l.acceptLoop()
 	return l, nil
 }
 

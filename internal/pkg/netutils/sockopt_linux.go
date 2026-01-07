@@ -93,6 +93,10 @@ func SetBindToDevSockopt(sc syscall.RawConn, device string) error {
 	return setSockOptString(sc, syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, device)
 }
 
+func SetBindToDevSockoptFd(fd int, device string) error {
+	return setSockOptStringFd(fd, syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, device)
+}
+
 func SetTCPTTLSockopt(conn net.Conn, ttl int) error {
 	family := extractFamilyFromConn(conn)
 	sc, err := conn.(syscall.Conn).SyscallConn()
@@ -126,7 +130,7 @@ func SetTCPMSSSockopt(conn net.Conn, mss uint16) error {
 	return setSockOptTcpMss(sc, family, mss)
 }
 
-func DialerControl(logger *slog.Logger, network, address string, c syscall.RawConn, ttl, minTtl uint8, mss uint16, password string, bindInterface string) error {
+func DialerControl(logger *slog.Logger, network, address string, fd int, ttl, minTtl uint8, mss uint16, password string, bindInterface string) error {
 	family := syscall.AF_INET
 	raddr, _ := net.ResolveTCPAddr("tcp", address)
 	if raddr.IP.To4() == nil {
@@ -137,65 +141,49 @@ func DialerControl(logger *slog.Logger, network, address string, c syscall.RawCo
 	if password != "" {
 		addr, _, _ := net.SplitHostPort(address)
 		t := buildTcpMD5Sig(addr, password)
-		if err := c.Control(func(fd uintptr) {
-			sockerr = os.NewSyscallError("setSockOpt", unix.SetsockoptTCPMD5Sig(int(fd), unix.IPPROTO_TCP, unix.TCP_MD5SIG, t))
-		}); err != nil {
-			return err
-		}
+		sockerr = os.NewSyscallError("setSockOpt", unix.SetsockoptTCPMD5Sig(int(fd), unix.IPPROTO_TCP, unix.TCP_MD5SIG, t))
 		if sockerr != nil {
 			return sockerr
 		}
 	}
 
 	if ttl != 0 {
-		if err := c.Control(func(fd uintptr) {
-			level := syscall.IPPROTO_IP
-			name := syscall.IP_TTL
-			if family == syscall.AF_INET6 {
-				level = syscall.IPPROTO_IPV6
-				name = syscall.IPV6_UNICAST_HOPS
-			}
-			sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(ttl)))
-		}); err != nil {
-			return err
+		level := syscall.IPPROTO_IP
+		name := syscall.IP_TTL
+		if family == syscall.AF_INET6 {
+			level = syscall.IPPROTO_IPV6
+			name = syscall.IPV6_UNICAST_HOPS
 		}
+		sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(ttl)))
 		if sockerr != nil {
 			return sockerr
 		}
 	}
 
 	if minTtl != 0 {
-		if err := c.Control(func(fd uintptr) {
-			level := syscall.IPPROTO_IP
-			name := syscall.IP_MINTTL
-			if family == syscall.AF_INET6 {
-				level = syscall.IPPROTO_IPV6
-				name = ipv6MinHopCount
-			}
-			sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(minTtl)))
-		}); err != nil {
-			return err
+		level := syscall.IPPROTO_IP
+		name := syscall.IP_MINTTL
+		if family == syscall.AF_INET6 {
+			level = syscall.IPPROTO_IPV6
+			name = ipv6MinHopCount
 		}
+		sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(minTtl)))
 		if sockerr != nil {
 			return sockerr
 		}
 	}
 
 	if mss != 0 {
-		if err := c.Control(func(fd uintptr) {
-			level := syscall.IPPROTO_TCP
-			name := syscall.TCP_MAXSEG
-			sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(mss)))
-		}); err != nil {
-			return err
-		}
+		level := syscall.IPPROTO_TCP
+		name := syscall.TCP_MAXSEG
+		sockerr = os.NewSyscallError("setSockOpt", syscall.SetsockoptInt(int(fd), level, name, int(mss)))
 		if sockerr != nil {
 			return sockerr
 		}
 	}
 
 	if bindInterface != "" {
-		if err := SetBindToDevSockopt(c, bindInterface); err != nil {
+		if err := SetBindToDevSockoptFd(fd, bindInterface); err != nil {
 			return err
 		}
 	}
