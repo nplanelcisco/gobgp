@@ -26,6 +26,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/k-sone/critbitgo"
 	"github.com/segmentio/fasthash/fnv1a"
@@ -92,10 +93,32 @@ func tableKey(nlri bgp.NLRI) addrPrefixKey {
 	return addrPrefixKey(h)
 }
 
-type Destinations map[addrPrefixKey][]*Destination
+type Destinations struct {
+	mp  map[addrPrefixKey][]*Destination
+	mu  *sync.RWMutex
+	Len int
+}
 
+func NewDestinations() *Destinations {
+	return &Destinations{mp: make(map[addrPrefixKey][]*Destination), mu: &sync.RWMutex{}}
+}
+
+func (d Destinations) Lock() {
+	d.mu.Lock()
+}
+func (d Destinations) Unlock() {
+	d.mu.Unlock()
+}
+func (d Destinations) RLock() {
+	d.mu.RLock()
+}
+func (d Destinations) RUnlock() {
+	d.mu.RUnlock()
+}
+
+// getDestinationList need to be called under lock
 func (d Destinations) getDestinationList(nlri bgp.NLRI) []*Destination {
-	dest, ok := d[tableKey(nlri)]
+	dest, ok := d.mp[tableKey(nlri)]
 	if !ok {
 		return nil
 	}
@@ -103,6 +126,9 @@ func (d Destinations) getDestinationList(nlri bgp.NLRI) []*Destination {
 }
 
 func (d Destinations) Get(nlri bgp.NLRI) *Destination {
+	d.RLock()
+	defer d.RUnlock()
+
 	for _, d := range d.getDestinationList(nlri) {
 		if AddrPrefixOnlyCompare(d.nlri, nlri) == 0 {
 			return d
@@ -112,16 +138,20 @@ func (d Destinations) Get(nlri bgp.NLRI) *Destination {
 }
 
 func (d Destinations) InsertUpdate(dest *Destination) (collision bool) {
+	d.Lock()
+	defer d.Unlock()
+
 	nlri := dest.nlri
 	key := tableKey(nlri)
 	new := false
-	if _, ok := d[key]; !ok {
-		d[key] = make([]*Destination, 0)
+	if _, ok := d.mp[key]; !ok {
+		d.mp[key] = make([]*Destination, 0)
 		new = true
+		d.Len++
 	}
-	for i, v := range d[key] {
+	for i, v := range d.mp[key] {
 		if AddrPrefixOnlyCompare(v.nlri, nlri) == 0 {
-			d[key][i] = dest
+			d.mp[key][i] = dest
 			return collision
 		}
 	}
@@ -129,20 +159,24 @@ func (d Destinations) InsertUpdate(dest *Destination) (collision bool) {
 		// we have collision
 		collision = true
 	}
-	d[key] = append(d[key], dest)
+	d.mp[key] = append(d.mp[key], dest)
 	return collision
 }
 
 func (d Destinations) Remove(nlri bgp.NLRI) {
+	d.Lock()
+	defer d.Unlock()
+
 	key := tableKey(nlri)
-	if _, ok := d[key]; !ok {
+	if _, ok := d.mp[key]; !ok {
 		return
 	}
-	for i, v := range d[key] {
+	for i, v := range d.mp[key] {
 		if AddrPrefixOnlyCompare(v.nlri, nlri) == 0 {
-			d[key] = append(d[key][:i], d[key][i+1:]...)
-			if len(d[key]) == 0 {
-				delete(d, key)
+			d.mp[key] = append(d.mp[key][:i], d.mp[key][i+1:]...)
+			if len(d.mp[key]) == 0 {
+				delete(d.mp, key)
+				d.Len--
 			}
 			return
 		}
@@ -189,7 +223,7 @@ func (e EVPNMacNLRIs) Remove(rt bgp.ExtendedCommunityInterface, mac net.Hardware
 
 type Table struct {
 	Family       bgp.Family
-	destinations Destinations
+	destinations *Destinations
 	logger       *slog.Logger
 	// index of evpn prefixes with paths to a specific MAC in a MAC-VRF
 	// this is a map[rt, MAC address]map[addrPrefixKey][]nlri
@@ -200,7 +234,7 @@ type Table struct {
 func NewTable(logger *slog.Logger, rf bgp.Family, dsts ...*Destination) *Table {
 	t := &Table{
 		Family:       rf,
-		destinations: make(Destinations),
+		destinations: NewDestinations(),
 		logger:       logger,
 		macIndex:     make(EVPNMacNLRIs),
 	}
@@ -215,8 +249,11 @@ func (t *Table) GetFamily() bgp.Family {
 }
 
 func (t *Table) deletePathsByVrf(vrf *Vrf) []*Path {
+	t.destinations.RLock()
+	defer t.destinations.RUnlock()
+
 	pathList := make([]*Path, 0)
-	for _, dests := range t.destinations {
+	for _, dests := range t.destinations.mp {
 		for _, dest := range dests {
 			for _, p := range dest.knownPathList {
 				var rd bgp.RouteDistinguisherInterface
@@ -242,12 +279,15 @@ func (t *Table) deletePathsByVrf(vrf *Vrf) []*Path {
 }
 
 func (t *Table) deleteRTCPathsByVrf(vrf *Vrf, vrfs map[string]*Vrf) []*Path {
+	t.destinations.RLock()
+	defer t.destinations.RUnlock()
+
 	pathList := make([]*Path, 0)
 	if t.Family != bgp.RF_RTC_UC {
 		return pathList
 	}
 	for lhs := range vrf.ImportRt {
-		for _, dests := range t.destinations {
+		for _, dests := range t.destinations.mp {
 			for _, dest := range dests {
 				nlri := dest.GetNlri().(*bgp.RouteTargetMembershipNLRI)
 				rhs, _ := extCommRouteTargetKey(nlri.RouteTarget)
@@ -364,8 +404,11 @@ func (t *Table) update(newPath *Path) *Update {
 }
 
 func (t *Table) GetDestinations() []*Destination {
-	d := make([]*Destination, 0, len(t.destinations))
-	for _, dests := range t.destinations {
+	t.destinations.RLock()
+	defer t.destinations.RUnlock()
+
+	d := make([]*Destination, 0, len(t.destinations.mp))
+	for _, dests := range t.destinations.mp {
 		d = append(d, dests...)
 	}
 	return d
@@ -547,7 +590,7 @@ func (t *Table) setDestination(dst *Destination) {
 }
 
 func (t *Table) Bests(id string, as uint32) []*Path {
-	paths := make([]*Path, 0, len(t.destinations))
+	paths := make([]*Path, 0, t.destinations.Len)
 	for _, dst := range t.GetDestinations() {
 		path := dst.GetBestPath(id, as)
 		if path != nil {
@@ -558,7 +601,7 @@ func (t *Table) Bests(id string, as uint32) []*Path {
 }
 
 func (t *Table) MultiBests(id string) [][]*Path {
-	paths := make([][]*Path, 0, len(t.destinations))
+	paths := make([][]*Path, 0, t.destinations.Len)
 	for _, dst := range t.GetDestinations() {
 		path := dst.GetMultiBestPath(id)
 		if path != nil {
@@ -569,7 +612,7 @@ func (t *Table) MultiBests(id string) [][]*Path {
 }
 
 func (t *Table) GetKnownPathList(id string, as uint32) []*Path {
-	paths := make([]*Path, 0, len(t.destinations))
+	paths := make([]*Path, 0, t.destinations.Len)
 	for _, dst := range t.GetDestinations() {
 		paths = append(paths, dst.GetKnownPathList(id, as)...)
 	}
@@ -857,7 +900,10 @@ func (t *Table) Info(option ...TableInfoOptions) *TableInfo {
 		as = o.AS
 	}
 
-	for _, dests := range t.destinations {
+	t.destinations.RLock()
+	defer t.destinations.RUnlock()
+
+	for _, dests := range t.destinations.mp {
 		if len(dests) > 1 {
 			numC += len(dests) - 1
 		}

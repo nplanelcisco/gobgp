@@ -24,6 +24,7 @@ import (
 	"net/netip"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/osrg/gobgp/v4/pkg/config/oc"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
@@ -137,6 +138,7 @@ func NewPeerInfo(g *oc.Global, p *oc.Neighbor, AS, localAS uint32, ID, localID n
 }
 
 type Destination struct {
+	mu            *sync.RWMutex
 	nlri          bgp.NLRI
 	knownPathList []*Path
 	localIdMap    *Bitmap
@@ -144,6 +146,7 @@ type Destination struct {
 
 func NewDestination(nlri bgp.NLRI, mapSize int, known ...*Path) *Destination {
 	d := &Destination{
+		mu:            &sync.RWMutex{},
 		nlri:          nlri,
 		knownPathList: known,
 		localIdMap:    NewBitmap(mapSize),
@@ -164,7 +167,12 @@ func (dd *Destination) setNlri(nlri bgp.NLRI) {
 }
 
 func (dd *Destination) GetAllKnownPathList() []*Path {
-	return dd.knownPathList
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
+	l := make([]*Path, len(dd.knownPathList))
+	copy(l, dd.knownPathList)
+	return l
 }
 
 func rsFilter(id string, as uint32, path *Path) bool {
@@ -176,6 +184,9 @@ func rsFilter(id string, as uint32, path *Path) bool {
 }
 
 func (dd *Destination) GetKnownPathList(id string, as uint32) []*Path {
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
 	list := make([]*Path, 0, len(dd.knownPathList))
 	for _, p := range dd.knownPathList {
 		if rsFilter(id, as, p) {
@@ -197,6 +208,9 @@ func getBestPath(id string, as uint32, pathList []*Path) *Path {
 }
 
 func (dd *Destination) GetBestPath(id string, as uint32) *Path {
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
 	p := getBestPath(id, as, dd.knownPathList)
 	if p == nil || p.IsNexthopInvalid {
 		return nil
@@ -205,6 +219,9 @@ func (dd *Destination) GetBestPath(id string, as uint32) *Path {
 }
 
 func (dd *Destination) GetMultiBestPath(id string) []*Path {
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
 	return getMultiBestPath(id, dd.knownPathList)
 }
 
@@ -213,6 +230,9 @@ func (dd *Destination) GetMultiBestPath(id string) []*Path {
 // Modifies destination's state related to stored paths. Removes withdrawn
 // paths from known paths. Also, adds new paths to known paths.
 func (dest *Destination) Calculate(logger *slog.Logger, newPath *Path) *Update {
+	dest.mu.Lock()
+	defer dest.mu.Unlock()
+
 	oldKnownPathList := make([]*Path, len(dest.knownPathList))
 	copy(oldKnownPathList, dest.knownPathList)
 
