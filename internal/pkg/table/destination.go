@@ -194,6 +194,13 @@ func (dd *destination) GetKnownPathList(id string, as uint32) []*Path {
 	return list
 }
 
+func (dd *destination) GetKnownPathListLength() int {
+	dd.mu.RLock()
+	defer dd.mu.RUnlock()
+
+	return len(dd.knownPathList)
+}
+
 func getBestPath(id string, as uint32, pathList []*Path) *Path {
 	for _, p := range pathList {
 		if rsFilter(id, as, p) {

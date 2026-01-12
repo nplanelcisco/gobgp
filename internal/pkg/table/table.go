@@ -406,7 +406,7 @@ func (t *Table) update(newPath *Path) *Update {
 	dst := t.getOrCreateDest(newPath.GetNlri(), 64)
 	u := dst.Calculate(t.logger, newPath)
 
-	if len(dst.knownPathList) == 0 {
+	if dst.GetKnownPathListLength() == 0 {
 		t.deleteDest(dst)
 		return u
 	}
